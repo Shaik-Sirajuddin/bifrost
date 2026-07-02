@@ -541,6 +541,58 @@ func TestResponsesMessageMCPListToolsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestResponsesMessageMCPApprovalRequestRoundTrip guards against a modeling
+// mistake: mcp_approval_request was grouped into the Action union as if it
+// were a nested action variant (like local_shell_call's "exec" sub-action or
+// web_search_call's "search"/"open_page"/"find" sub-actions, which genuinely
+// nest under an "action" key). It isn't — mcp_approval_request is a
+// top-level item type whose id/type/name/server_label/arguments sit
+// directly on the item. Action's own struct tag (json:"action,omitempty")
+// only fires on a literal nested "action" object, so it never fired for
+// mcp_approval_request and Action/ServerLabel stayed permanently nil —
+// silently breaking consumers like framework/tracing that read
+// Action.ResponsesMCPApprovalRequestAction.Name.
+func TestResponsesMessageMCPApprovalRequestRoundTrip(t *testing.T) {
+	raw := `{"id":"mcpr_1","type":"mcp_approval_request","name":"query_prometheus","server_label":"grafana","arguments":"{\"query\":\"up\"}"}`
+
+	var msg ResponsesMessage
+	if err := Unmarshal([]byte(raw), &msg); err != nil {
+		t.Fatalf("unmarshal mcp_approval_request: %v", err)
+	}
+
+	if msg.ResponsesToolMessage == nil || msg.ResponsesToolMessage.Action == nil || msg.ResponsesToolMessage.Action.ResponsesMCPApprovalRequestAction == nil {
+		t.Fatalf("expected Action.ResponsesMCPApprovalRequestAction to be populated, got %#v", msg.ResponsesToolMessage)
+	}
+	action := msg.ResponsesToolMessage.Action.ResponsesMCPApprovalRequestAction
+	if action.ServerLabel != "grafana" {
+		t.Fatalf("expected server_label to survive unmarshal, got %q", action.ServerLabel)
+	}
+	if action.Name != "query_prometheus" {
+		t.Fatalf("expected name to survive unmarshal, got %q", action.Name)
+	}
+	if action.ID != "mcpr_1" {
+		t.Fatalf("expected id to survive unmarshal, got %q", action.ID)
+	}
+	if action.Arguments != `{"query":"up"}` {
+		t.Fatalf("expected arguments to survive unmarshal, got %q", action.Arguments)
+	}
+
+	encoded, err := MarshalSorted(msg)
+	if err != nil {
+		t.Fatalf("marshal mcp_approval_request: %v", err)
+	}
+	got := string(encoded)
+	if strings.Contains(got, `"action":`) {
+		t.Fatalf("expected no nested action object for mcp_approval_request, got: %s", got)
+	}
+	if !strings.Contains(got, `"server_label":"grafana"`) {
+		t.Fatalf("expected server_label to survive marshal, got: %s", got)
+	}
+	if !strings.Contains(got, `"name":"query_prometheus"`) {
+		t.Fatalf("expected name to survive marshal, got: %s", got)
+	}
+}
+
 func TestWithDefaultsStripsCodeExecutionCarry(t *testing.T) {
 	code := "print(1)"
 	resp := &BifrostResponsesResponse{

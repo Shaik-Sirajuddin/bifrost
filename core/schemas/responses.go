@@ -1003,11 +1003,25 @@ type ResponsesMessage struct {
 // embedded ResponsesMCPListTools.Tools). Struct-tag-based decoding can only
 // bind one field per JSON key, so both are routed manually here based on
 // Type instead of relying on either field's own tag.
+//
+// It additionally shadows `server_label` for mcp_approval_request items and
+// reconstructs ResponsesToolMessage.Action.ResponsesMCPApprovalRequestAction
+// from the already-decoded top-level fields. mcp_approval_request is a
+// top-level item type (its id/type/name/server_label/arguments sit directly
+// on the item), not a nested action variant like the other members of the
+// Action union (local_shell_call's "exec" sub-action, web_search_call's
+// "search"/"open_page"/"find" sub-actions, etc., which genuinely do nest
+// under an "action" key). Action's own struct tag (json:"action,omitempty")
+// only ever fires on a literal nested "action" object, so for
+// mcp_approval_request it never fires at all and ServerLabel/Action stay
+// permanently nil — consumers like framework/tracing that read
+// Action.ResponsesMCPApprovalRequestAction.Name silently see nothing.
 func (m *ResponsesMessage) UnmarshalJSON(data []byte) error {
 	type Alias ResponsesMessage
 	aux := &struct {
-		Arguments json.RawMessage `json:"arguments,omitempty"`
-		Tools     json.RawMessage `json:"tools,omitempty"`
+		Arguments   json.RawMessage `json:"arguments,omitempty"`
+		Tools       json.RawMessage `json:"tools,omitempty"`
+		ServerLabel *string         `json:"server_label,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -1051,6 +1065,30 @@ func (m *ResponsesMessage) UnmarshalJSON(data []byte) error {
 		}
 	}
 
+	if m.Type != nil && *m.Type == ResponsesMessageTypeMCPApprovalRequest {
+		if m.ResponsesToolMessage == nil {
+			m.ResponsesToolMessage = &ResponsesToolMessage{}
+		}
+		action := &ResponsesMCPApprovalRequestAction{
+			Type: string(*m.Type),
+		}
+		if m.ID != nil {
+			action.ID = *m.ID
+		}
+		if m.ResponsesToolMessage.Name != nil {
+			action.Name = *m.ResponsesToolMessage.Name
+		}
+		if m.ResponsesToolMessage.Arguments != nil {
+			action.Arguments = *m.ResponsesToolMessage.Arguments
+		}
+		if aux.ServerLabel != nil {
+			action.ServerLabel = *aux.ServerLabel
+		}
+		m.ResponsesToolMessage.Action = &ResponsesToolMessageActionStruct{
+			ResponsesMCPApprovalRequestAction: action,
+		}
+	}
+
 	return nil
 }
 
@@ -1076,6 +1114,11 @@ func responsesToolArgumentsToString(raw json.RawMessage) string {
 // (ResponsesToolMessage.Tools) and mcp_list_tools (the embedded
 // ResponsesMCPListTools.Tools) — see UnmarshalJSON for why these can't be
 // left to struct-tag-based encoding.
+//
+// It also emits `server_label` for mcp_approval_request from
+// Action.ResponsesMCPApprovalRequestAction and suppresses Action itself from
+// the embedded struct, so it isn't re-emitted nested under an "action" key —
+// see UnmarshalJSON for why mcp_approval_request's fields belong top-level.
 func (m ResponsesMessage) MarshalJSON() ([]byte, error) {
 	type Alias ResponsesMessage
 
@@ -1083,10 +1126,12 @@ func (m ResponsesMessage) MarshalJSON() ([]byte, error) {
 	var argsValue interface{}
 	var execValue *string
 	var toolsValue interface{}
+	var serverLabelValue *string
 
 	isToolSearchCall := m.Type != nil && *m.Type == ResponsesMessageTypeToolSearchCall
 	isToolSearchOutput := m.Type != nil && *m.Type == ResponsesMessageTypeToolSearchOutput
 	isMCPListTools := m.Type != nil && *m.Type == ResponsesMessageTypeMCPListTools
+	isMCPApprovalRequest := m.Type != nil && *m.Type == ResponsesMessageTypeMCPApprovalRequest
 	needsExecution := isToolSearchCall || isToolSearchOutput
 
 	if m.ResponsesToolMessage != nil {
@@ -1096,6 +1141,15 @@ func (m ResponsesMessage) MarshalJSON() ([]byte, error) {
 			toolsValue = m.ResponsesToolMessage.Tools
 		} else if isMCPListTools && m.ResponsesToolMessage.ResponsesMCPListTools != nil && len(m.ResponsesToolMessage.ResponsesMCPListTools.Tools) > 0 {
 			toolsValue = m.ResponsesToolMessage.ResponsesMCPListTools.Tools
+		}
+
+		if isMCPApprovalRequest {
+			// Suppress Action so the Alias doesn't nest these fields under
+			// "action" — mcp_approval_request is top-level on the wire.
+			toolCopy.Action = nil
+			if m.ResponsesToolMessage.Action != nil && m.ResponsesToolMessage.Action.ResponsesMCPApprovalRequestAction != nil {
+				serverLabelValue = &m.ResponsesToolMessage.Action.ResponsesMCPApprovalRequestAction.ServerLabel
+			}
 		}
 
 		if toolCopy.Arguments != nil {
@@ -1141,15 +1195,17 @@ func (m ResponsesMessage) MarshalJSON() ([]byte, error) {
 	}
 
 	aux := struct {
-		Arguments interface{} `json:"arguments,omitempty"`
-		Execution *string     `json:"execution,omitempty"`
-		Tools     interface{} `json:"tools,omitempty"`
+		Arguments   interface{} `json:"arguments,omitempty"`
+		Execution   *string     `json:"execution,omitempty"`
+		Tools       interface{} `json:"tools,omitempty"`
+		ServerLabel *string     `json:"server_label,omitempty"`
 		*Alias
 	}{
-		Arguments: argsValue,
-		Execution: execValue,
-		Tools:     toolsValue,
-		Alias:     (*Alias)(&clone),
+		Arguments:   argsValue,
+		Execution:   execValue,
+		Tools:       toolsValue,
+		ServerLabel: serverLabelValue,
+		Alias:       (*Alias)(&clone),
 	}
 
 	return MarshalSorted(aux)
