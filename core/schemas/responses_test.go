@@ -548,6 +548,38 @@ func TestResponsesMessageMCPListToolsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestResponsesMessageMCPCallServerLabelRoundTrip guards against the same
+// doubly-nested-embedding limitation as mcp_list_tools, but for mcp_call:
+// ResponsesMCPToolCall.ServerLabel never reached the wire in either
+// direction unless routed manually.
+func TestResponsesMessageMCPCallServerLabelRoundTrip(t *testing.T) {
+	raw := `{"type":"mcp_call","server_label":"grafana","name":"query_prometheus"}`
+
+	var msg ResponsesMessage
+	if err := Unmarshal([]byte(raw), &msg); err != nil {
+		t.Fatalf("unmarshal mcp_call: %v", err)
+	}
+
+	if msg.ResponsesToolMessage == nil || msg.ResponsesToolMessage.ResponsesMCPToolCall == nil {
+		t.Fatalf("expected ResponsesMCPToolCall to be populated, got %#v", msg.ResponsesToolMessage)
+	}
+	if msg.ResponsesToolMessage.ResponsesMCPToolCall.ServerLabel != "grafana" {
+		t.Fatalf("expected server_label to survive unmarshal, got %q", msg.ResponsesToolMessage.ResponsesMCPToolCall.ServerLabel)
+	}
+
+	encoded, err := MarshalSorted(msg)
+	if err != nil {
+		t.Fatalf("marshal mcp_call: %v", err)
+	}
+	got := string(encoded)
+	if !strings.Contains(got, `"server_label":"grafana"`) {
+		t.Fatalf("expected server_label to survive marshal, got: %s", got)
+	}
+	if !strings.Contains(got, `"name":"query_prometheus"`) {
+		t.Fatalf("expected name to survive marshal, got: %s", got)
+	}
+}
+
 func TestWithDefaultsStripsCodeExecutionCarry(t *testing.T) {
 	code := "print(1)"
 	resp := &BifrostResponsesResponse{

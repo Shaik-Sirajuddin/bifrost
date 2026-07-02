@@ -1005,13 +1005,14 @@ type ResponsesMessage struct {
 // Type instead of relying on either field's own tag.
 //
 // It additionally shadows `server_label` for the same reason mcp_list_tools
-// needs manual routing at all: ResponsesMCPListTools sits behind two levels
-// of anonymous pointer embedding (ResponsesMessage -> *ResponsesToolMessage ->
-// *ResponsesMCPListTools), and the JSON decoder here does not auto-allocate
-// through more than one level of embedded pointer, so none of
-// ResponsesMCPListTools' own fields are ever reachable via its struct tags
-// alone — the struct simply stays nil unless something else allocates it
-// first, as this method now does for the `tools` array.
+// needs manual routing at all: ResponsesMCPListTools (and, for mcp_call,
+// ResponsesMCPToolCall) sit behind two levels of anonymous pointer embedding
+// (ResponsesMessage -> *ResponsesToolMessage -> *ResponsesMCPListTools /
+// *ResponsesMCPToolCall), and the JSON decoder here does not auto-allocate
+// through more than one level of embedded pointer, so none of their own
+// fields are ever reachable via struct tags alone — the struct simply stays
+// nil unless something else allocates it first, as this method now does for
+// the `tools` array and the `server_label` field on both types.
 func (m *ResponsesMessage) UnmarshalJSON(data []byte) error {
 	type Alias ResponsesMessage
 	aux := &struct {
@@ -1063,14 +1064,25 @@ func (m *ResponsesMessage) UnmarshalJSON(data []byte) error {
 		}
 	}
 
-	if isMCPListTools && aux.ServerLabel != nil {
-		if m.ResponsesToolMessage == nil {
-			m.ResponsesToolMessage = &ResponsesToolMessage{}
+	if aux.ServerLabel != nil {
+		switch {
+		case isMCPListTools:
+			if m.ResponsesToolMessage == nil {
+				m.ResponsesToolMessage = &ResponsesToolMessage{}
+			}
+			if m.ResponsesToolMessage.ResponsesMCPListTools == nil {
+				m.ResponsesToolMessage.ResponsesMCPListTools = &ResponsesMCPListTools{}
+			}
+			m.ResponsesToolMessage.ResponsesMCPListTools.ServerLabel = *aux.ServerLabel
+		case m.Type != nil && *m.Type == ResponsesMessageTypeMCPCall:
+			if m.ResponsesToolMessage == nil {
+				m.ResponsesToolMessage = &ResponsesToolMessage{}
+			}
+			if m.ResponsesToolMessage.ResponsesMCPToolCall == nil {
+				m.ResponsesToolMessage.ResponsesMCPToolCall = &ResponsesMCPToolCall{}
+			}
+			m.ResponsesToolMessage.ResponsesMCPToolCall.ServerLabel = *aux.ServerLabel
 		}
-		if m.ResponsesToolMessage.ResponsesMCPListTools == nil {
-			m.ResponsesToolMessage.ResponsesMCPListTools = &ResponsesMCPListTools{}
-		}
-		m.ResponsesToolMessage.ResponsesMCPListTools.ServerLabel = *aux.ServerLabel
 	}
 
 	return nil
@@ -1110,6 +1122,7 @@ func (m ResponsesMessage) MarshalJSON() ([]byte, error) {
 	isToolSearchCall := m.Type != nil && *m.Type == ResponsesMessageTypeToolSearchCall
 	isToolSearchOutput := m.Type != nil && *m.Type == ResponsesMessageTypeToolSearchOutput
 	isMCPListTools := m.Type != nil && *m.Type == ResponsesMessageTypeMCPListTools
+	isMCPCall := m.Type != nil && *m.Type == ResponsesMessageTypeMCPCall
 	needsExecution := isToolSearchCall || isToolSearchOutput
 
 	if m.ResponsesToolMessage != nil {
@@ -1125,6 +1138,9 @@ func (m ResponsesMessage) MarshalJSON() ([]byte, error) {
 				toolsValue = m.ResponsesToolMessage.ResponsesMCPListTools.Tools
 			}
 			serverLabelValue = &m.ResponsesToolMessage.ResponsesMCPListTools.ServerLabel
+		} else if isMCPCall && m.ResponsesToolMessage.ResponsesMCPToolCall != nil {
+			// mcp_call: same doubly-nested-embedding limitation as mcp_list_tools.
+			serverLabelValue = &m.ResponsesToolMessage.ResponsesMCPToolCall.ServerLabel
 		}
 
 		if toolCopy.Arguments != nil {
