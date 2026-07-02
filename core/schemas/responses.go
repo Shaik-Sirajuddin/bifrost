@@ -1003,11 +1003,21 @@ type ResponsesMessage struct {
 // embedded ResponsesMCPListTools.Tools). Struct-tag-based decoding can only
 // bind one field per JSON key, so both are routed manually here based on
 // Type instead of relying on either field's own tag.
+//
+// It additionally shadows `server_label` for the same reason mcp_list_tools
+// needs manual routing at all: ResponsesMCPListTools sits behind two levels
+// of anonymous pointer embedding (ResponsesMessage -> *ResponsesToolMessage ->
+// *ResponsesMCPListTools), and the JSON decoder here does not auto-allocate
+// through more than one level of embedded pointer, so none of
+// ResponsesMCPListTools' own fields are ever reachable via its struct tags
+// alone — the struct simply stays nil unless something else allocates it
+// first, as this method now does for the `tools` array.
 func (m *ResponsesMessage) UnmarshalJSON(data []byte) error {
 	type Alias ResponsesMessage
 	aux := &struct {
-		Arguments json.RawMessage `json:"arguments,omitempty"`
-		Tools     json.RawMessage `json:"tools,omitempty"`
+		Arguments   json.RawMessage `json:"arguments,omitempty"`
+		Tools       json.RawMessage `json:"tools,omitempty"`
+		ServerLabel *string         `json:"server_label,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -1025,6 +1035,8 @@ func (m *ResponsesMessage) UnmarshalJSON(data []byte) error {
 		m.Arguments = &args
 	}
 
+	isMCPListTools := m.Type != nil && *m.Type == ResponsesMessageTypeMCPListTools
+
 	if len(aux.Tools) > 0 && string(aux.Tools) != "null" {
 		switch {
 		case m.Type != nil && *m.Type == ResponsesMessageTypeToolSearchOutput:
@@ -1036,7 +1048,7 @@ func (m *ResponsesMessage) UnmarshalJSON(data []byte) error {
 				m.ResponsesToolMessage = &ResponsesToolMessage{}
 			}
 			m.ResponsesToolMessage.Tools = tools
-		case m.Type != nil && *m.Type == ResponsesMessageTypeMCPListTools:
+		case isMCPListTools:
 			var tools []ResponsesMCPTool
 			if err := Unmarshal(aux.Tools, &tools); err != nil {
 				return fmt.Errorf("mcp_list_tools tools: %w", err)
@@ -1049,6 +1061,16 @@ func (m *ResponsesMessage) UnmarshalJSON(data []byte) error {
 			}
 			m.ResponsesToolMessage.ResponsesMCPListTools.Tools = tools
 		}
+	}
+
+	if isMCPListTools && aux.ServerLabel != nil {
+		if m.ResponsesToolMessage == nil {
+			m.ResponsesToolMessage = &ResponsesToolMessage{}
+		}
+		if m.ResponsesToolMessage.ResponsesMCPListTools == nil {
+			m.ResponsesToolMessage.ResponsesMCPListTools = &ResponsesMCPListTools{}
+		}
+		m.ResponsesToolMessage.ResponsesMCPListTools.ServerLabel = *aux.ServerLabel
 	}
 
 	return nil
@@ -1083,6 +1105,7 @@ func (m ResponsesMessage) MarshalJSON() ([]byte, error) {
 	var argsValue interface{}
 	var execValue *string
 	var toolsValue interface{}
+	var serverLabelValue *string
 
 	isToolSearchCall := m.Type != nil && *m.Type == ResponsesMessageTypeToolSearchCall
 	isToolSearchOutput := m.Type != nil && *m.Type == ResponsesMessageTypeToolSearchOutput
@@ -1094,8 +1117,14 @@ func (m ResponsesMessage) MarshalJSON() ([]byte, error) {
 
 		if isToolSearchOutput && len(m.ResponsesToolMessage.Tools) > 0 {
 			toolsValue = m.ResponsesToolMessage.Tools
-		} else if isMCPListTools && m.ResponsesToolMessage.ResponsesMCPListTools != nil && len(m.ResponsesToolMessage.ResponsesMCPListTools.Tools) > 0 {
-			toolsValue = m.ResponsesToolMessage.ResponsesMCPListTools.Tools
+		} else if isMCPListTools && m.ResponsesToolMessage.ResponsesMCPListTools != nil {
+			// mcp_list_tools: same doubly-nested-embedding limitation as
+			// UnmarshalJSON — neither field on ResponsesMCPListTools reaches
+			// the wire via its own struct tag, so both are re-injected here.
+			if len(m.ResponsesToolMessage.ResponsesMCPListTools.Tools) > 0 {
+				toolsValue = m.ResponsesToolMessage.ResponsesMCPListTools.Tools
+			}
+			serverLabelValue = &m.ResponsesToolMessage.ResponsesMCPListTools.ServerLabel
 		}
 
 		if toolCopy.Arguments != nil {
@@ -1141,15 +1170,17 @@ func (m ResponsesMessage) MarshalJSON() ([]byte, error) {
 	}
 
 	aux := struct {
-		Arguments interface{} `json:"arguments,omitempty"`
-		Execution *string     `json:"execution,omitempty"`
-		Tools     interface{} `json:"tools,omitempty"`
+		Arguments   interface{} `json:"arguments,omitempty"`
+		Execution   *string     `json:"execution,omitempty"`
+		Tools       interface{} `json:"tools,omitempty"`
+		ServerLabel *string     `json:"server_label,omitempty"`
 		*Alias
 	}{
-		Arguments: argsValue,
-		Execution: execValue,
-		Tools:     toolsValue,
-		Alias:     (*Alias)(&clone),
+		Arguments:   argsValue,
+		Execution:   execValue,
+		Tools:       toolsValue,
+		ServerLabel: serverLabelValue,
+		Alias:       (*Alias)(&clone),
 	}
 
 	return MarshalSorted(aux)
