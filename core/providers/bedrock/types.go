@@ -761,6 +761,11 @@ type BedrockStreamEvent struct {
 	// Start field for tool use events
 	Start *BedrockContentBlockStart `json:"start,omitempty"` // For contentBlockStart events
 
+	// Stop marks this event as a contentBlockStop event (see ContentBlockIndex for which
+	// block). AWS's ConverseStream contract requires every content block opened via
+	// contentBlockStart to be closed via contentBlockStop before messageStop — see #4262.
+	Stop bool `json:"-"`
+
 	// Metadata and usage (can appear at top level)
 	Usage   *BedrockTokenUsage      `json:"usage,omitempty"`   // Usage information
 	Metrics *BedrockConverseMetrics `json:"metrics,omitempty"` // Performance metrics

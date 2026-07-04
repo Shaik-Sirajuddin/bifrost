@@ -1666,7 +1666,11 @@ func (d *ChatPromptTokensDetails) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// MarshalJSON emits cached_tokens (read+write) alongside the individual fields for OpenAI spec compatibility.
+// MarshalJSON emits cached_tokens alongside the individual fields for OpenAI spec
+// compatibility. Per the OpenAI spec, cached_tokens is prompt tokens read from cache —
+// it must NOT include cache writes (see #4816: folding writes in made every standard
+// OpenAI-spec consumer count cache-write tokens as cheap cache-read tokens, which is a
+// large under-count of cost since writes are billed higher than reads).
 func (d ChatPromptTokensDetails) MarshalJSON() ([]byte, error) {
 	type raw struct {
 		TextTokens              int                          `json:"text_tokens,omitempty"`
@@ -1684,7 +1688,7 @@ func (d ChatPromptTokensDetails) MarshalJSON() ([]byte, error) {
 		CachedReadTokens:        d.CachedReadTokens,
 		CachedWriteTokens:       d.CachedWriteTokens,
 		CachedWriteTokenDetails: d.CachedWriteTokenDetails,
-		CachedTokens:            d.CachedReadTokens + d.CachedWriteTokens,
+		CachedTokens:            d.CachedReadTokens,
 	})
 }
 

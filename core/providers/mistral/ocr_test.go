@@ -632,6 +632,52 @@ func TestOCRWithMockServer(t *testing.T) {
 	}
 }
 
+// TestOCRHonorsRequestPathOverride is a regression test for #4219: the Mistral OCR request
+// previously always built its URL as base_url + "/v1/ocr" via GetPathFromContext, ignoring
+// CustomProviderConfig.RequestPathOverrides — unlike OpenAI, which already honors overrides via
+// GetRequestPath. This verifies OCR now hits the overridden path instead of the default.
+func TestOCRHonorsRequestPathOverride(t *testing.T) {
+	t.Parallel()
+
+	hitOverridePath := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/custom/ocr/endpoint" {
+			hitOverridePath = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"model":"mistral-ocr-latest","pages":[],"usage_info":{"pages_processed":0,"doc_size_bytes":0}}`))
+	}))
+	defer server.Close()
+
+	provider := NewMistralProvider(&schemas.ProviderConfig{
+		NetworkConfig: schemas.NetworkConfig{
+			BaseURL:                        server.URL,
+			DefaultRequestTimeoutInSeconds: 300,
+		},
+		CustomProviderConfig: &schemas.CustomProviderConfig{
+			RequestPathOverrides: map[schemas.RequestType]string{
+				schemas.OCRRequest: "/custom/ocr/endpoint",
+			},
+		},
+	}, &testLogger{})
+
+	ctx, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	request := &schemas.BifrostOCRRequest{
+		Model: "mistral-ocr-latest",
+		Document: schemas.OCRDocument{
+			Type:        schemas.OCRDocumentTypeDocumentURL,
+			DocumentURL: schemas.Ptr("https://example.com/doc.pdf"),
+		},
+	}
+
+	_, err := provider.OCR(ctx, schemas.Key{Value: *schemas.NewSecretVar("test-api-key")}, request)
+	require.Nil(t, err)
+	assert.True(t, hitOverridePath, "expected OCR request to hit the overridden path, not the default /v1/ocr")
+}
+
 // TestOCRNilInput tests handling of nil OCR request.
 func TestOCRNilInput(t *testing.T) {
 	t.Parallel()

@@ -125,6 +125,63 @@ func TestMistralProvider_CustomAliasChatStreamUsesBaseCompatibilityAndAliasMetad
 	assert.Equal(t, customMistralProviderName, request.Provider)
 }
 
+// TestMistralProvider_ChatCompletionStreamHonorsRequestPathOverride is a regression
+// test for #4219's follow-up finding: ChatCompletionStream hardcoded its URL as
+// base_url + "/v1/chat/completions" via string concatenation, unlike the other Mistral
+// endpoints, so CustomProviderConfig.RequestPathOverrides had no effect on the
+// streaming path.
+func TestMistralProvider_ChatCompletionStreamHonorsRequestPathOverride(t *testing.T) {
+	t.Parallel()
+
+	hitOverridePath := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/custom/chat/endpoint" {
+			hitOverridePath = true
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		require.True(t, ok)
+		_, err := w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"mistral-small-latest\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"}}]}\n\n"))
+		require.NoError(t, err)
+		flusher.Flush()
+		_, err = w.Write([]byte("data: [DONE]\n\n"))
+		require.NoError(t, err)
+		flusher.Flush()
+	}))
+	defer server.Close()
+
+	provider := NewMistralProvider(&schemas.ProviderConfig{
+		NetworkConfig: schemas.NetworkConfig{BaseURL: server.URL},
+		CustomProviderConfig: &schemas.CustomProviderConfig{
+			RequestPathOverrides: map[schemas.RequestType]string{
+				schemas.ChatCompletionStreamRequest: "/custom/chat/endpoint",
+			},
+		},
+	}, &testLogger{})
+
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	request := &schemas.BifrostChatRequest{
+		Model: "mistral-small-latest",
+		Input: []schemas.ChatMessage{{
+			Role:    schemas.ChatMessageRoleUser,
+			Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("hello")},
+		}},
+	}
+	postHookRunner := func(_ *schemas.BifrostContext, response *schemas.BifrostResponse, err *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError) {
+		return response, err
+	}
+
+	stream, bifrostErr := provider.ChatCompletionStream(ctx, postHookRunner, nil, schemas.Key{}, request)
+	require.Nil(t, bifrostErr)
+	for chunk := range stream {
+		if chunk.BifrostError != nil {
+			t.Fatalf("unexpected stream error: %s", chunk.BifrostError.Error.Message)
+		}
+	}
+
+	assert.True(t, hitOverridePath, "expected ChatCompletionStream to hit the overridden path, not the default /v1/chat/completions")
+}
+
 func TestMistralProvider_CustomAliasEmbeddingReportsAliasMetadata(t *testing.T) {
 	t.Parallel()
 
