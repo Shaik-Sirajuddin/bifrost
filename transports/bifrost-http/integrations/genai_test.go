@@ -62,6 +62,11 @@ func TestExtractAndSetModelAndRequestTypePreservesRawBodyForGenerateContent(t *t
 	ctx := &fasthttp.RequestCtx{}
 	ctx.SetUserValue("model", "gemini-2.5-flash:generateContent")
 	ctx.Request.Header.SetMethod("POST")
+	// Raw-body passthrough requires an explicit Gemini signal (x-model-provider header or a
+	// gemini/ model prefix) — a bare model name may resolve to Vertex instead, which doesn't
+	// accept the raw Gemini-native body verbatim. See explicitGemini in
+	// extractAndSetModelAndRequestType.
+	ctx.Request.Header.Set("x-model-provider", "gemini")
 	ctx.Request.SetBody(rawBody)
 
 	req := &gemini.GeminiGenerationRequest{}
@@ -73,6 +78,29 @@ func TestExtractAndSetModelAndRequestTypePreservesRawBodyForGenerateContent(t *t
 
 	assert.Equal(t, true, bifrostCtx.Value(schemas.BifrostContextKeyUseRawRequestBody))
 	assert.Equal(t, rawBody, bifrostCtx.Value(genAIRawRequestBodyContextKey))
+}
+
+// TestExtractAndSetModelAndRequestTypeDoesNotRawPassthroughWithoutExplicitProvider verifies
+// that a bare model name with no x-model-provider header and no gemini/ prefix does NOT
+// trigger raw-body passthrough, since the model may resolve to a non-Gemini provider (e.g.
+// Vertex) that can't accept the raw Gemini-native body verbatim. This locks in the
+// intentional hardening from #4478 (explicitGemini) so it can't silently regress.
+func TestExtractAndSetModelAndRequestTypeDoesNotRawPassthroughWithoutExplicitProvider(t *testing.T) {
+	rawBody := []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`)
+	ctx := &fasthttp.RequestCtx{}
+	ctx.SetUserValue("model", "gemini-2.5-flash:generateContent")
+	ctx.Request.Header.SetMethod("POST")
+	ctx.Request.SetBody(rawBody)
+
+	req := &gemini.GeminiGenerationRequest{}
+	require.NoError(t, sonic.Unmarshal(rawBody, req))
+	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+
+	err := extractAndSetModelAndRequestType(ctx, bifrostCtx, req)
+	require.NoError(t, err)
+
+	assert.Nil(t, bifrostCtx.Value(schemas.BifrostContextKeyUseRawRequestBody))
+	assert.Nil(t, bifrostCtx.Value(genAIRawRequestBodyContextKey))
 }
 
 func TestExtractAndSetModelAndRequestTypeDoesNotRawPassthroughEmbedding(t *testing.T) {
@@ -98,6 +126,9 @@ func TestGenAIBatchCreateConverterCarriesRawBody(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.SetUserValue("model", "gemini-2.5-flash:batchGenerateContent")
 	ctx.Request.Header.SetMethod("POST")
+	// See explicitGemini in extractAndSetModelAndRequestType: raw-body passthrough requires
+	// an explicit Gemini signal, since a bare model name may resolve to Vertex instead.
+	ctx.Request.Header.Set("x-model-provider", "gemini")
 	ctx.Request.SetBody(rawBody)
 
 	req := &gemini.GeminiBatchCreateRequest{}
