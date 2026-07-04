@@ -1684,7 +1684,7 @@ func (d ChatPromptTokensDetails) MarshalJSON() ([]byte, error) {
 		CachedReadTokens:        d.CachedReadTokens,
 		CachedWriteTokens:       d.CachedWriteTokens,
 		CachedWriteTokenDetails: d.CachedWriteTokenDetails,
-		CachedTokens:            d.CachedReadTokens + d.CachedWriteTokens,
+		CachedTokens:            d.CachedReadTokens,
 	})
 }
 
