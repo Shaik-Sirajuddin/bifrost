@@ -1777,8 +1777,15 @@ func ToBedrockConverseStreamResponse(bifrostResp *schemas.BifrostResponsesStream
 		return nil, nil
 
 	case schemas.ResponsesStreamResponseTypeOutputItemDone:
-		// Item done - Bedrock doesn't have explicit done events, so we skip them
-		return nil, nil
+		// Item done - close the content block. AWS's ConverseStream contract requires a
+		// contentBlockStop for every block opened via contentBlockStart (see #4262); SDKs
+		// that finalize a block on this event (e.g. strands) need it to assemble output.
+		contentBlockIndex := 0
+		if bifrostResp.ContentIndex != nil {
+			contentBlockIndex = *bifrostResp.ContentIndex
+		}
+		event.ContentBlockIndex = &contentBlockIndex
+		event.Stop = true
 
 	case schemas.ResponsesStreamResponseTypeCompleted:
 		// Message stop - always set stopReason
@@ -1865,6 +1872,17 @@ func (event *BedrockStreamEvent) ToEncodedEvents() []BedrockEncodedEvent {
 				ContentBlockIndex *int                      `json:"contentBlockIndex"`
 			}{
 				Delta:             event.Delta,
+				ContentBlockIndex: event.ContentBlockIndex,
+			},
+		})
+	}
+
+	if event.Stop {
+		events = append(events, BedrockEncodedEvent{
+			EventType: "contentBlockStop",
+			Payload: struct {
+				ContentBlockIndex *int `json:"contentBlockIndex"`
+			}{
 				ContentBlockIndex: event.ContentBlockIndex,
 			},
 		})
@@ -2218,9 +2236,9 @@ func ToBedrockResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.
 			input = input[:trimmed]
 		}
 
-		// Inline mid-conversation system reminders for Anthropic models (keeps Bedrock's
-		// prefix-based prompt cache stable); hoist-everything for other families.
-		messages, systemMessages, err := ConvertBifrostMessagesToBedrockMessages(ctx, input, schemas.IsAnthropicModelFamily(ctx, bifrostReq.Model))
+		// Inline mid-conversation system reminders for Anthropic and Nova models (both
+		// prefix-cache, per BedrockModelSupportsCachePoints); hoist-everything for other families.
+		messages, systemMessages, err := ConvertBifrostMessagesToBedrockMessages(ctx, input, schemas.IsAnthropicModelFamily(ctx, bifrostReq.Model) || schemas.IsNovaModelFamily(ctx, bifrostReq.Model))
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert Responses messages: %w", err)
 		}
@@ -4215,6 +4233,41 @@ func convertSingleBedrockMessageToBifrostMessages(ctx *schemas.BifrostContext, m
 				}
 				outputMessages = append(outputMessages, toolMsg)
 			}
+
+		} else if block.Image != nil {
+			// Image content — regression fix for #3289: previously fell through this
+			// if/else-if chain unhandled and was silently dropped on ingest (the
+			// reverse, egress direction already builds block.Image correctly).
+			role := convertBedrockRoleToBifrostRole(msg.Role)
+
+			imageBlock := schemas.ResponsesMessageContentBlock{
+				Type: schemas.ResponsesInputMessageContentBlockTypeImage,
+				ResponsesInputMessageContentBlockImage: &schemas.ResponsesInputMessageContentBlockImage{},
+			}
+
+			mimeType := "image/png"
+			if block.Image.Format != "" {
+				mimeType = "image/" + block.Image.Format
+			}
+			if block.Image.Source.Bytes != nil {
+				imageDataURL := *block.Image.Source.Bytes
+				if !strings.HasPrefix(imageDataURL, "data:") {
+					imageDataURL = fmt.Sprintf("data:%s;base64,%s", mimeType, imageDataURL)
+				}
+				imageBlock.ResponsesInputMessageContentBlockImage.ImageURL = &imageDataURL
+			}
+
+			bifrostMsg := schemas.ResponsesMessage{
+				Type: schemas.Ptr(schemas.ResponsesMessageTypeMessage),
+				Role: &role,
+				Content: &schemas.ResponsesMessageContent{
+					ContentBlocks: []schemas.ResponsesMessageContentBlock{imageBlock},
+				},
+			}
+			if isOutputMessage {
+				bifrostMsg.ID = schemas.Ptr("msg_" + fmt.Sprintf("%d", time.Now().UnixNano()))
+			}
+			outputMessages = append(outputMessages, bifrostMsg)
 
 		} else if block.Document != nil {
 			// Document content

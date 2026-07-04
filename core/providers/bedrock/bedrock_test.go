@@ -5063,6 +5063,53 @@ func TestDocumentFormatResponsesPathRoundTrip(t *testing.T) {
 	}
 }
 
+// TestImageContentBlockIngestNotDropped is a regression test for #3289: a user-message
+// image content block sent to Bifrost's Bedrock-compatible converse endpoint was silently
+// dropped during the inbound Converse -> Bifrost-Responses conversion (ConvertBedrockMessagesToBifrostMessages
+// had no branch for block.Image, unlike the reverse egress direction which already handles it).
+func TestImageContentBlockIngestNotDropped(t *testing.T) {
+	t.Parallel()
+
+	imageBytes := "iVBORw0KGgo=" // arbitrary base64; only structural presence is under test
+	bedrockMessages := []bedrock.BedrockMessage{
+		{
+			Role: bedrock.BedrockMessageRoleUser,
+			Content: []bedrock.BedrockContentBlock{
+				{
+					Image: &bedrock.BedrockImageSource{
+						Format: "png",
+						Source: bedrock.BedrockImageSourceData{
+							Bytes: &imageBytes,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+
+	bifrostMessages := bedrock.ConvertBedrockMessagesToBifrostMessages(ctx, bedrockMessages, nil, false)
+	require.NotEmpty(t, bifrostMessages, "expected the image message to survive ingest, not be dropped")
+
+	var imageBlock *schemas.ResponsesMessageContentBlock
+	for _, msg := range bifrostMessages {
+		if msg.Content == nil {
+			continue
+		}
+		for i, block := range msg.Content.ContentBlocks {
+			if block.Type == schemas.ResponsesInputMessageContentBlockTypeImage {
+				imageBlock = &msg.Content.ContentBlocks[i]
+			}
+		}
+	}
+	require.NotNil(t, imageBlock, "expected an input_image content block, got none — image was dropped")
+	require.NotNil(t, imageBlock.ResponsesInputMessageContentBlockImage)
+	require.NotNil(t, imageBlock.ResponsesInputMessageContentBlockImage.ImageURL)
+	assert.Contains(t, *imageBlock.ResponsesInputMessageContentBlockImage.ImageURL, imageBytes)
+	assert.Contains(t, *imageBlock.ResponsesInputMessageContentBlockImage.ImageURL, "image/png")
+}
+
 // TestBedrockToolInputKeyOrderPreservation verifies that multiple parallel tool calls
 // preserve the client's original key ordering after conversion to Bedrock format.
 func TestBedrockToolInputKeyOrderPreservation(t *testing.T) {
@@ -6425,6 +6472,48 @@ func TestMidConversationSystemReminderHoistedForNonAnthropic(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestToBedrockResponsesRequest_NovaInlinesMidConversationSystem verifies that Nova models,
+// which also prefix-cache (see BedrockModelSupportsCachePoints), take the same inlining path
+// as Anthropic models at the ToBedrockResponsesRequest call site — not just when
+// ConvertBifrostMessagesToBedrockMessages is called directly with inline=true. Regression test
+// for #4660: the inline gate previously checked IsAnthropicModelFamily only, so Nova requests
+// silently fell back to hoist-everything and lost prompt-cache reads on mid-conversation
+// system messages.
+func TestToBedrockResponsesRequest_NovaInlinesMidConversationSystem(t *testing.T) {
+	req := &schemas.BifrostResponsesRequest{
+		Model: "bedrock/amazon.nova-pro-v1:0",
+		Input: []schemas.ResponsesMessage{
+			systemReminderTextMsg("You are a helpful assistant."), // leading system prompt
+			userReminderTextMsg("first user turn"),
+			systemReminderTextMsg("Mid-conversation reminder."), // must be inlined for Nova
+			userReminderTextMsg("second user turn"),
+		},
+		Params: &schemas.ResponsesParameters{},
+	}
+
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	bedrockReq, err := bedrock.ToBedrockResponsesRequest(ctx, req)
+	require.NoError(t, err)
+	require.NotNil(t, bedrockReq)
+
+	// Only the leading system prompt should be hoisted into the system block — same
+	// contract as the Anthropic case in TestMidConversationSystemReminderStaysInline.
+	require.Len(t, bedrockReq.System, 1, "only the leading system prompt belongs in the system block for Nova")
+	require.NotNil(t, bedrockReq.System[0].Text)
+	assert.Equal(t, "You are a helpful assistant.", *bedrockReq.System[0].Text)
+
+	// The mid-conversation reminder must be inlined as a wrapped user message, not hoisted.
+	inlined := false
+	for _, m := range bedrockReq.Messages {
+		for _, b := range m.Content {
+			if b.Text != nil && *b.Text == "<system-reminder>\nMid-conversation reminder.\n</system-reminder>\n" {
+				inlined = true
+			}
+		}
+	}
+	assert.True(t, inlined, "the mid-conversation reminder must be inlined for Nova, not hoisted")
 }
 
 // TestMultipleLeadingSystemMessagesAllHoisted verifies that a leading run of more than one
