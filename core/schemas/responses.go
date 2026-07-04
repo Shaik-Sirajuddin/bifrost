@@ -1052,6 +1052,16 @@ const (
 	ResponsesMessageTypeToolSearchCall   ResponsesMessageType = "tool_search_call"
 	ResponsesMessageTypeToolSearchOutput ResponsesMessageType = "tool_search_output"
 	ResponsesMessageTypeAdvisorCall      ResponsesMessageType = "advisor_call" // Anthropic advisor server tool (server_tool_use + advisor_tool_result)
+
+	// ResponsesMessageTypeAnthropicToolSearchCall is Anthropic's server-run tool_search
+	// (tool_search_tool_bm25 / tool_search_tool_regex + tool_search_tool_result).
+	// Deliberately distinct from ResponsesMessageTypeToolSearchCall/ToolSearchOutput
+	// above, which are Codex/OpenAI's client-executed tool_search meta-tool (different
+	// shape: arguments is a search query object, execution:"client", no server-side
+	// results). Reusing that type string would collide with isToolSearchItem's raw-byte
+	// preservation path and misrepresent Anthropic's server-completed search as a
+	// client-side call to any Responses API consumer.
+	ResponsesMessageTypeAnthropicToolSearchCall ResponsesMessageType = "tool_search_tool_call"
 )
 
 // ResponsesMessage is a union type that can contain different types of input items
