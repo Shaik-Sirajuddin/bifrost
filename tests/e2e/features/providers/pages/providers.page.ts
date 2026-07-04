@@ -225,6 +225,50 @@ export class ProvidersPage extends BasePage {
   }
 
   /**
+   * Open the "Edit Provider Config" sheet for the given (already selected) provider
+   * and switch to the "API Structure" tab, which hosts the custom-provider-only
+   * settings (is_key_less, sends_done_marker, allowed requests, ...).
+   */
+  async openApiStructureTab(name: string): Promise<void> {
+    await this.selectProvider(name)
+
+    const editConfigBtn = this.page.getByTestId('provider-edit-config-btn')
+    await editConfigBtn.waitFor({ state: 'visible', timeout: 5000 })
+    await editConfigBtn.click()
+
+    const apiStructureTab = this.page.getByTestId('provider-tab-api-structure')
+    await apiStructureTab.waitFor({ state: 'visible', timeout: 5000 })
+    await apiStructureTab.click()
+
+    await this.getSendsDoneMarkerSwitch().waitFor({ state: 'visible', timeout: 5000 })
+  }
+
+  /**
+   * Close the provider config sheet (Escape key; sheet has no explicit close button on this tab).
+   */
+  async closeProviderConfigSheet(): Promise<void> {
+    await this.page.keyboard.press('Escape')
+    await this.page.getByTestId('custom-provider-sends-done-marker-switch').or(this.getSendsDoneMarkerSwitch()).waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {})
+  }
+
+  /**
+   * Locator for the "Sends [DONE] Marker" switch in the API Structure edit tab.
+   */
+  getSendsDoneMarkerSwitch(): Locator {
+    return this.page.getByTestId('api-structure-sends-done-marker-switch')
+  }
+
+  /**
+   * Save the API Structure form (edit tab) and wait for the success toast.
+   */
+  async saveApiStructureConfig(): Promise<void> {
+    const saveBtn = this.page.getByTestId('api-structure-save-btn')
+    await saveBtn.click()
+    await this.waitForSuccessToast()
+    await waitForNetworkIdle(this.page)
+  }
+
+  /**
    * Get key row locator
    */
   getKeyRow(name: string): Locator {

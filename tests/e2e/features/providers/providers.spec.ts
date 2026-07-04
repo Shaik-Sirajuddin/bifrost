@@ -240,6 +240,100 @@ test.describe("Providers", () => {
       // Assert provider is no longer in the configured providers list (do not rely on toast)
       await expect(providerItem).not.toBeVisible({ timeout: 5000 });
     });
+
+    test("should persist the Sends [DONE] Marker toggle when enabled, saved, and reopened", async ({
+      providersPage,
+    }) => {
+      const providerData = createCustomProviderData({
+        name: `done-marker-${Date.now()}`,
+        baseProviderType: "openai",
+        baseUrl: "https://api.openai.com/v1",
+      });
+      createdProviders.push(providerData.name);
+
+      await providersPage.createProvider(providerData);
+      const providerItem = providersPage.getProviderItem(providerData.name);
+      await expect(providerItem).toBeVisible({ timeout: 15000 });
+
+      // Open the edit form and confirm the toggle starts off (unset -> rendered unchecked)
+      await providersPage.openApiStructureTab(providerData.name);
+      const sendsDoneMarkerSwitch = providersPage.getSendsDoneMarkerSwitch();
+      await expect(sendsDoneMarkerSwitch).toHaveAttribute("data-state", "unchecked");
+      await providersPage.page.screenshot({
+        path: "test-results/screenshots/sends-done-marker-before-toggle.png",
+      });
+
+      // Toggle it on and save; capture the PUT payload to assert the field round-trips explicitly
+      const savePromise = providersPage.page.waitForRequest(
+        (req) =>
+          req.method() === "PUT" &&
+          req.url().includes(`/providers/${providerData.name}`),
+      );
+      await sendsDoneMarkerSwitch.click();
+      await expect(sendsDoneMarkerSwitch).toHaveAttribute("data-state", "checked");
+      await providersPage.saveApiStructureConfig();
+      const savedRequest = await savePromise;
+      const savedBody = savedRequest.postDataJSON();
+      expect(savedBody.custom_provider_config.sends_done_marker).toBe(true);
+
+      // Screenshot post-save, while the form is still open, showing the toggle enabled
+      // and the success toast (avoids capturing a mid-CSS-transition frame from the click).
+      await sendsDoneMarkerSwitch.scrollIntoViewIfNeeded();
+      await providersPage.page.screenshot({
+        path: "test-results/screenshots/sends-done-marker-after-toggle.png",
+      });
+
+      // Close and reopen the edit form; the toggle should still reflect the saved value
+      await providersPage.closeProviderConfigSheet();
+      await providersPage.openApiStructureTab(providerData.name);
+      await expect(providersPage.getSendsDoneMarkerSwitch()).toHaveAttribute(
+        "data-state",
+        "checked",
+      );
+      await providersPage.page.screenshot({
+        path: "test-results/screenshots/sends-done-marker-persisted-after-reload.png",
+      });
+      await providersPage.closeProviderConfigSheet();
+    });
+
+    test("should omit the Sends [DONE] Marker field when left untouched", async ({
+      providersPage,
+    }) => {
+      const providerData = createCustomProviderData({
+        name: `done-marker-untouched-${Date.now()}`,
+        baseProviderType: "openai",
+        baseUrl: "https://api.openai.com/v1",
+      });
+      createdProviders.push(providerData.name);
+
+      await providersPage.createProvider(providerData);
+      const providerItem = providersPage.getProviderItem(providerData.name);
+      await expect(providerItem).toBeVisible({ timeout: 15000 });
+
+      // Open the edit form without touching the Sends [DONE] Marker switch; toggle an
+      // unrelated field (is_key_less) instead so the form is dirty enough to save.
+      await providersPage.openApiStructureTab(providerData.name);
+      await expect(providersPage.getSendsDoneMarkerSwitch()).toHaveAttribute(
+        "data-state",
+        "unchecked",
+      );
+
+      const isKeylessSwitch = providersPage.page.getByRole("switch", { name: /Is Keyless/i });
+      const savePromise = providersPage.page.waitForRequest(
+        (req) =>
+          req.method() === "PUT" &&
+          req.url().includes(`/providers/${providerData.name}`),
+      );
+      await isKeylessSwitch.click();
+      await providersPage.saveApiStructureConfig();
+      const savedRequest = await savePromise;
+      const savedBody = savedRequest.postDataJSON();
+
+      // sends_done_marker was never touched, so it must not be forced to `false`
+      expect(savedBody.custom_provider_config).not.toHaveProperty("sends_done_marker");
+
+      await providersPage.closeProviderConfigSheet();
+    });
   });
 
   test.describe("Form Validation", () => {

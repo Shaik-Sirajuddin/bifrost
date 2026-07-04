@@ -38,7 +38,7 @@ export default function ModelProviderConfig({ provider, onRequestDelete }: Props
 					<Trash className="h-4 w-4" />
 				</Button>
 			)}
-			<Button variant="outline" onClick={() => setShowConfigSheet(true)}>
+			<Button variant="outline" onClick={() => setShowConfigSheet(true)} data-testid="provider-edit-config-btn">
 				<SettingsIcon className="h-4 w-4" />
 				{hasUpdateProviderAccess ? "Edit Provider Config" : "View Provider Config"}
 			</Button>

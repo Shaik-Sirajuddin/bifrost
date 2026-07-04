@@ -176,6 +176,7 @@ export function ApiStructureFormFragment({ provider }: Props) {
 										checked={field.value ?? false}
 										onCheckedChange={field.onChange}
 										disabled={!hasUpdateProviderAccess}
+										data-testid="api-structure-sends-done-marker-switch"
 									/>
 								</div>
 							</FormItem>
@@ -198,7 +199,12 @@ export function ApiStructureFormFragment({ provider }: Props) {
 					<TooltipProvider>
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<Button type="submit" disabled={!form.formState.isDirty || !hasUpdateProviderAccess} isLoading={isUpdatingProvider}>
+								<Button
+									type="submit"
+									disabled={!form.formState.isDirty || !hasUpdateProviderAccess}
+									isLoading={isUpdatingProvider}
+									data-testid="api-structure-save-btn"
+								>
 									Save API Structure Configuration
 								</Button>
 							</TooltipTrigger>
