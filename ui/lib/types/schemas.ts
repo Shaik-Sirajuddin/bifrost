@@ -627,6 +627,7 @@ export const customProviderConfigSchema = z
 		is_key_less: z.boolean().optional(),
 		allowed_requests: allowedRequestsSchema.optional(),
 		request_path_overrides: z.record(z.string(), z.string().optional()).optional(),
+		sends_done_marker: z.boolean().optional(),
 	})
 	.refine(
 		(data) => {
@@ -648,6 +649,7 @@ export const formCustomProviderConfigSchema = z
 		is_key_less: z.boolean().optional(),
 		allowed_requests: allowedRequestsSchema.optional(),
 		request_path_overrides: z.record(z.string(), z.string().optional()).optional(),
+		sends_done_marker: z.boolean().optional(),
 	})
 	.refine(
 		(data) => {

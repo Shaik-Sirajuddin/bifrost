@@ -25,6 +25,7 @@ const formSchema = z.object({
 	request_path_overrides: z.record(z.string(), z.string().optional()).optional(),
 	is_key_less: z.boolean().optional(),
 	allow_private_network: z.boolean().optional(),
+	sends_done_marker: z.boolean().optional(),
 });
 
 type FormData = z.infer<typeof formSchema>;
@@ -103,6 +104,7 @@ export function AddCustomProviderSheetContent({ show = true, onClose, onSave }: 
 				allowed_requests: data.allowed_requests,
 				request_path_overrides: cleanPathOverrides(data.request_path_overrides),
 				is_key_less: data.is_key_less ?? false,
+				...(data.sends_done_marker !== undefined && { sends_done_marker: data.sends_done_marker }),
 			},
 			network_config: {
 				base_url: data.base_url,
@@ -254,6 +256,33 @@ export function AddCustomProviderSheetContent({ show = true, onClose, onSave }: 
 								)}
 							/>
 						)}
+						<FormField
+							control={form.control}
+							name="sends_done_marker"
+							render={({ field }) => (
+								<FormItem>
+									<div className="flex items-center justify-between space-x-2 rounded-lg border p-3">
+										<div className="space-y-0.5">
+											<label htmlFor="sends-done-marker" className="text-sm font-medium">
+												Sends [DONE] Marker
+											</label>
+											<p className="text-muted-foreground text-sm">
+												Whether this provider sends a <code>[DONE]</code> marker to terminate streaming responses. Leave off if
+												unsure; the default detection for the base format will be used.
+											</p>
+										</div>
+										<Switch
+											id="sends-done-marker"
+											size="md"
+											checked={field.value ?? false}
+											onCheckedChange={field.onChange}
+											disabled={!hasProviderCreateAccess}
+											data-testid="custom-provider-sends-done-marker-switch"
+										/>
+									</div>
+								</FormItem>
+							)}
+						/>
 						{/* Allowed Requests Configuration */}
 						<AllowedRequestsFields
 							control={form.control}

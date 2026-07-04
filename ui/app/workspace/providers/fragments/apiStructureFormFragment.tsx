@@ -36,6 +36,7 @@ export function ApiStructureFormFragment({ provider }: Props) {
 		defaultValues: {
 			base_provider_type: provider.custom_provider_config?.base_provider_type ?? "openai",
 			is_key_less: provider.custom_provider_config?.is_key_less ?? false,
+			sends_done_marker: provider.custom_provider_config?.sends_done_marker,
 			allowed_requests: {
 				text_completion: provider.custom_provider_config?.allowed_requests?.text_completion ?? true,
 				text_completion_stream: provider.custom_provider_config?.allowed_requests?.text_completion_stream ?? true,
@@ -78,6 +79,7 @@ export function ApiStructureFormFragment({ provider }: Props) {
 					is_key_less: data.is_key_less ?? false,
 					allowed_requests: data.allowed_requests,
 					request_path_overrides: cleanPathOverrides(data.request_path_overrides),
+					...(data.sends_done_marker !== undefined && { sends_done_marker: data.sends_done_marker }),
 				},
 			}),
 		)
@@ -153,6 +155,32 @@ export function ApiStructureFormFragment({ provider }: Props) {
 							)}
 						/>
 					)}
+					<FormField
+						control={form.control}
+						name="sends_done_marker"
+						render={({ field }) => (
+							<FormItem>
+								<div className="flex items-center justify-between space-x-2 rounded-lg border p-3">
+									<div className="space-y-0.5">
+										<label htmlFor="sends-done-marker" className="text-sm font-medium">
+											Sends [DONE] Marker
+										</label>
+										<p className="text-muted-foreground text-sm">
+											Whether this provider sends a <code>[DONE]</code> marker to terminate streaming responses. Leave off if
+											unsure; the default detection for the base format will be used.
+										</p>
+									</div>
+									<Switch
+										id="sends-done-marker"
+										size="md"
+										checked={field.value ?? false}
+										onCheckedChange={field.onChange}
+										disabled={!hasUpdateProviderAccess}
+									/>
+								</div>
+							</FormItem>
+						)}
+					/>
 				</div>
 
 				{/* Allowed Requests Configuration */}

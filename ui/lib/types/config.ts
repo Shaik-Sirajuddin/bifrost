@@ -370,6 +370,7 @@ export interface CustomProviderConfig {
 	is_key_less?: boolean;
 	allowed_requests?: AllowedRequests;
 	request_path_overrides?: Record<string, string>;
+	sends_done_marker?: boolean;
 }
 
 // OpenAIConfig holds OpenAI-specific provider configuration.
