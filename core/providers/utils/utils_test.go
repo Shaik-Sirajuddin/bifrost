@@ -1937,3 +1937,33 @@ func TestStripThoughtSignature(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderSendsDoneMarker(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	cases := []struct {
+		name                 string
+		providerName         schemas.ModelProvider
+		customProviderConfig *schemas.CustomProviderConfig
+		want                 bool
+	}{
+		{"cerebras defaults to false", schemas.Cerebras, nil, false},
+		{"perplexity defaults to false", schemas.Perplexity, nil, false},
+		{"huggingface defaults to false", schemas.HuggingFace, nil, false},
+		{"bedrock defaults to false", schemas.Bedrock, nil, false},
+		{"openai defaults to true", schemas.OpenAI, nil, true},
+		{"unknown custom provider defaults to true", schemas.ModelProvider("synthetic"), nil, true},
+		{"custom provider config nil override defers to default", schemas.ModelProvider("synthetic"), &schemas.CustomProviderConfig{}, true},
+		{"custom provider config overrides default to false", schemas.ModelProvider("synthetic"), &schemas.CustomProviderConfig{SendsDoneMarker: &falseVal}, false},
+		{"custom provider config overrides a normally-false provider to true", schemas.Cerebras, &schemas.CustomProviderConfig{SendsDoneMarker: &trueVal}, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ProviderSendsDoneMarker(tc.providerName, tc.customProviderConfig); got != tc.want {
+				t.Errorf("ProviderSendsDoneMarker(%q, %+v) = %v, want %v", tc.providerName, tc.customProviderConfig, got, tc.want)
+			}
+		})
+	}
+}

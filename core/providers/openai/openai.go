@@ -413,6 +413,7 @@ func (provider *OpenAIProvider) TextCompletionStream(ctx *schemas.BifrostContext
 		providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest),
 		providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse),
 		provider.GetProviderKey(),
+		provider.customProviderConfig,
 		nil,
 		postHookRunner,
 		nil,
@@ -435,6 +436,7 @@ func HandleOpenAITextCompletionStreaming(
 	sendBackRawRequest bool,
 	sendBackRawResponse bool,
 	providerName schemas.ModelProvider,
+	customProviderConfig *schemas.CustomProviderConfig,
 	customErrorConverter ErrorConverter,
 	postHookRunner schemas.PostHookRunner,
 	customResponseHandler responseHandler[schemas.BifrostTextCompletionResponse],
@@ -726,7 +728,7 @@ func HandleOpenAITextCompletionStreaming(
 			}
 
 			// For providers that don't send [DONE] marker break on finish_reason
-			if !providerUtils.ProviderSendsDoneMarker(providerName) && finishReason != nil {
+			if !providerUtils.ProviderSendsDoneMarker(providerName, customProviderConfig) && finishReason != nil {
 				break
 			}
 		}
@@ -955,6 +957,7 @@ func (provider *OpenAIProvider) ChatCompletionStream(ctx *schemas.BifrostContext
 		providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest),
 		providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse),
 		provider.GetProviderKey(),
+		provider.customProviderConfig,
 		postHookRunner,
 		nil,
 		nil,
@@ -980,6 +983,7 @@ func HandleOpenAIChatCompletionStreaming(
 	sendBackRawRequest bool,
 	sendBackRawResponse bool,
 	providerName schemas.ModelProvider,
+	customProviderConfig *schemas.CustomProviderConfig,
 	postHookRunner schemas.PostHookRunner,
 	customRequestConverter func(*schemas.BifrostChatRequest) (providerUtils.RequestBodyWithExtraParams, error),
 	customResponseHandler responseHandler[schemas.BifrostChatResponse],
@@ -1395,7 +1399,7 @@ func HandleOpenAIChatCompletionStreaming(
 				}
 
 				// For providers that don't send [DONE] marker break on finish_reason
-				if !providerUtils.ProviderSendsDoneMarker(providerName) && finishReason != nil {
+				if !providerUtils.ProviderSendsDoneMarker(providerName, customProviderConfig) && finishReason != nil {
 					break
 				}
 			}

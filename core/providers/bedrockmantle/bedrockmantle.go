@@ -258,7 +258,7 @@ func (provider *BedrockMantleProvider) ChatCompletionStream(ctx *schemas.Bifrost
 		provider.networkConfig.StreamIdleTimeoutInSeconds,
 		providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest),
 		providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse),
-		provider.GetProviderKey(), postHookRunner,
+		provider.GetProviderKey(), nil, postHookRunner,
 		nil, nil, nil, nil, nil,
 		provider.mantleSigner(ctx, key, url, "text/event-stream", region),
 		provider.logger, postHookSpanFinalizer,

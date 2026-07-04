@@ -515,6 +515,7 @@ type CustomProviderConfig struct {
 	BaseProviderType     ModelProvider          `json:"base_provider_type"`               // Base provider type
 	AllowedRequests      *AllowedRequests       `json:"allowed_requests,omitempty"`       // Allowed requests for the custom provider
 	RequestPathOverrides map[RequestType]string `json:"request_path_overrides,omitempty"` // Mapping of request type to its custom path which will override the default path of the provider (not allowed for Bedrock)
+	SendsDoneMarker      *bool                  `json:"sends_done_marker,omitempty"`      // Whether the custom provider sends a [DONE] marker at the end of streaming responses; nil defers to the default per-provider behavior
 }
 
 // IsOperationAllowed checks if a specific operation is allowed for this custom provider

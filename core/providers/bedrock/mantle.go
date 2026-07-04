@@ -169,7 +169,7 @@ func (provider *BedrockProvider) mantleChatCompletionsStream(
 		provider.networkConfig.StreamIdleTimeoutInSeconds,
 		providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest),
 		providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse),
-		provider.GetProviderKey(), postHookRunner,
+		provider.GetProviderKey(), provider.customProviderConfig, postHookRunner,
 		nil,
 		nil,
 		nil,

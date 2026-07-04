@@ -2747,7 +2747,10 @@ func GetProviderName(defaultProvider schemas.ModelProvider, customConfig *schema
 // ProviderSendsDoneMarker returns true if the provider sends the [DONE] marker in streaming responses.
 // Some OpenAI-compatible providers (like Cerebras) don't send [DONE] and instead end the stream
 // after sending the finish_reason. This function helps determine the correct stream termination logic.
-func ProviderSendsDoneMarker(providerName schemas.ModelProvider) bool {
+func ProviderSendsDoneMarker(providerName schemas.ModelProvider, customProviderConfig *schemas.CustomProviderConfig) bool {
+	if customProviderConfig != nil && customProviderConfig.SendsDoneMarker != nil {
+		return *customProviderConfig.SendsDoneMarker
+	}
 	switch providerName {
 	case schemas.Cerebras, schemas.Perplexity, schemas.HuggingFace, schemas.Bedrock:
 		// Cerebras, Perplexity, HuggingFace, and Bedrock mantle don't send [DONE] marker, ends stream after finish_reason

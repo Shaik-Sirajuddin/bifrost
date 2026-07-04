@@ -128,6 +128,7 @@ func (provider *ParasailProvider) ChatCompletionStream(ctx *schemas.BifrostConte
 		providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest),
 		providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse),
 		schemas.Parasail,
+		nil,
 		postHookRunner,
 		nil,
 		nil,
