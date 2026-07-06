@@ -724,6 +724,12 @@ func (s *BifrostHTTPServer) OnKeyAdded(ctx context.Context, provider schemas.Mod
 		s.Config.ModelCatalog.MarkLiveRefreshInFlight(provider)
 		s.FetchAndStoreLiveForKey(ctx, provider, keyID)
 		s.Config.ModelCatalog.NoteLiveRefreshCompleted(provider)
+	} else {
+		// For keyless providers keyID is the shared "" sentinel: if this is
+		// the provider's first key and it's added disabled, drop whatever
+		// entry the zero-key keyless fetch (RefreshLiveModelsForProvider) may
+		// have already populated there so it doesn't linger indefinitely.
+		s.Config.ModelCatalog.InvalidateLive(provider, keyID)
 	}
 	return nil
 }
