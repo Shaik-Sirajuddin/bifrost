@@ -23,7 +23,7 @@ func TestRequestTimeRateLimitResetPerformance(t *testing.T) {
 	start := time.Now()
 	for i := 0; i < iterations; i++ {
 		markRequestRateLimitExpired(store, rateLimitID)
-		if err := store.BumpRateLimitUsage(ctx, rateLimitID, 0, false, true); err != nil {
+		if err := store.BumpRateLimitUsage(ctx, rateLimitID, 0, 0, false, true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -49,7 +49,7 @@ func BenchmarkSingleRequestTimeRateLimitResetDoesNotRefreshReferences(b *testing
 		markRequestRateLimitExpired(store, rateLimitID)
 
 		b.StartTimer()
-		if err := store.BumpRateLimitUsage(ctx, rateLimitID, 0, false, true); err != nil {
+		if err := store.BumpRateLimitUsage(ctx, rateLimitID, 0, 0, false, true); err != nil {
 			b.Fatal(err)
 		}
 		b.StopTimer()
@@ -76,7 +76,7 @@ func TestRequestTimeRateLimitResetSkipsReferenceRefresh(t *testing.T) {
 		}
 	})
 
-	if err := store.BumpRateLimitUsage(ctx, rateLimitID, 0, false, true); err != nil {
+	if err := store.BumpRateLimitUsage(ctx, rateLimitID, 0, 0, false, true); err != nil {
 		t.Fatal(err)
 	}
 	resetRateLimit := store.LoadRateLimit(ctx, rateLimitID)

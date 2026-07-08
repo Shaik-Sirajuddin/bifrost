@@ -94,6 +94,9 @@ const providerConfigSchema = z.object({
 			token_reset_duration: z.string().optional(),
 			request_max_limit: z.number().int().nonnegative().optional(),
 			request_reset_duration: z.string().optional(),
+			// Optional weighted token accounting; omitted defaults to 1.0. Must be > 0, no upper bound.
+			input_token_weight: z.number().positive().optional(),
+			output_token_weight: z.number().positive().optional(),
 		})
 		.optional(),
 });
@@ -133,6 +136,9 @@ const formSchema = z
 		// Request limits
 		requestMaxLimit: z.number().int().nonnegative().optional(),
 		requestResetDuration: z.string().optional(),
+		// Optional weighted token accounting; omitted defaults to 1.0. Must be > 0, no upper bound.
+		inputTokenWeight: z.number().positive().optional(),
+		outputTokenWeight: z.number().positive().optional(),
 	})
 	.refine(
 		(data) => {
@@ -303,6 +309,8 @@ export default function VirtualKeySheet({ virtualKey, teams, customers, defaultT
 								token_reset_duration: config.rate_limit.token_reset_duration,
 								request_max_limit: config.rate_limit.request_max_limit ?? undefined,
 								request_reset_duration: config.rate_limit.request_reset_duration,
+								input_token_weight: config.rate_limit.input_token_weight ?? undefined,
+								output_token_weight: config.rate_limit.output_token_weight ?? undefined,
 							}
 						: undefined,
 				})) || [],
@@ -335,6 +343,8 @@ export default function VirtualKeySheet({ virtualKey, teams, customers, defaultT
 			tokenResetDuration: virtualKey?.rate_limit?.token_reset_duration || "1h",
 			requestMaxLimit: virtualKey?.rate_limit?.request_max_limit ?? undefined,
 			requestResetDuration: virtualKey?.rate_limit?.request_reset_duration || "1h",
+			inputTokenWeight: virtualKey?.rate_limit?.input_token_weight ?? undefined,
+			outputTokenWeight: virtualKey?.rate_limit?.output_token_weight ?? undefined,
 		},
 	});
 
@@ -497,6 +507,8 @@ export default function VirtualKeySheet({ virtualKey, teams, customers, defaultT
 		form.setValue("tokenResetDuration", "1h", { shouldDirty: true });
 		form.setValue("requestMaxLimit", undefined, { shouldDirty: true });
 		form.setValue("requestResetDuration", "1h", { shouldDirty: true });
+		form.setValue("inputTokenWeight", undefined, { shouldDirty: true });
+		form.setValue("outputTokenWeight", undefined, { shouldDirty: true });
 	};
 
 	const normalizeProviderConfigs = (configs: typeof providerConfigs, existingConfigs?: VirtualKey["provider_configs"]): any[] => {
@@ -513,6 +525,8 @@ export default function VirtualKeySheet({ virtualKey, teams, customers, defaultT
 						token_reset_duration: hasTokenMaxLimit ? config.rate_limit?.token_reset_duration || "1h" : null,
 						request_max_limit: config.rate_limit?.request_max_limit ?? null,
 						request_reset_duration: hasRequestMaxLimit ? config.rate_limit?.request_reset_duration || "1h" : null,
+						input_token_weight: config.rate_limit?.input_token_weight ?? null,
+						output_token_weight: config.rate_limit?.output_token_weight ?? null,
 					};
 				}
 
@@ -789,6 +803,8 @@ export default function VirtualKeySheet({ virtualKey, teams, customers, defaultT
 						token_reset_duration: hasTokenMaxLimit ? data.tokenResetDuration || "1h" : null,
 						request_max_limit: data.requestMaxLimit ?? null,
 						request_reset_duration: hasRequestMaxLimit ? data.requestResetDuration || "1h" : null,
+						input_token_weight: data.inputTokenWeight ?? null,
+						output_token_weight: data.outputTokenWeight ?? null,
 					};
 				} else if (hadRateLimit) {
 					updateData.rate_limit = {};
@@ -832,6 +848,8 @@ export default function VirtualKeySheet({ virtualKey, teams, customers, defaultT
 						token_reset_duration: hasTokenMaxLimit ? data.tokenResetDuration || "1h" : undefined,
 						request_max_limit: data.requestMaxLimit,
 						request_reset_duration: hasRequestMaxLimit ? data.requestResetDuration || "1h" : undefined,
+						input_token_weight: data.inputTokenWeight,
+						output_token_weight: data.outputTokenWeight,
 					};
 				}
 
@@ -1422,6 +1440,51 @@ export default function VirtualKeySheet({ virtualKey, teams, customers, defaultT
 																		options={resetDurationOptions}
 																	/>
 
+																	{config.rate_limit?.token_max_limit !== undefined && (
+																		<div className="grid grid-cols-2 gap-3">
+																			<div>
+																				<Label htmlFor={`providerInputTokenWeight-${index}`} className="text-sm font-normal">
+																					Input Token Weight
+																				</Label>
+																				<Input
+																					id={`providerInputTokenWeight-${index}`}
+																					type="number"
+																					min="0"
+																					step="0.1"
+																					placeholder="1.0"
+																					value={config.rate_limit?.input_token_weight ?? ""}
+																					onChange={(e) => {
+																						const currentRateLimit = config.rate_limit || {};
+																						handleUpdateProviderConfig(index, "rate_limit", {
+																							...currentRateLimit,
+																							input_token_weight: e.target.value === "" ? undefined : Number(e.target.value),
+																						});
+																					}}
+																				/>
+																			</div>
+																			<div>
+																				<Label htmlFor={`providerOutputTokenWeight-${index}`} className="text-sm font-normal">
+																					Output Token Weight
+																				</Label>
+																				<Input
+																					id={`providerOutputTokenWeight-${index}`}
+																					type="number"
+																					min="0"
+																					step="0.1"
+																					placeholder="1.0"
+																					value={config.rate_limit?.output_token_weight ?? ""}
+																					onChange={(e) => {
+																						const currentRateLimit = config.rate_limit || {};
+																						handleUpdateProviderConfig(index, "rate_limit", {
+																							...currentRateLimit,
+																							output_token_weight: e.target.value === "" ? undefined : Number(e.target.value),
+																						});
+																					}}
+																				/>
+																			</div>
+																		</div>
+																	)}
+
 																	<NumberAndSelect
 																		id={`providerRequestLimit-${index}`}
 																		labelClassName="font-normal"
@@ -1748,6 +1811,53 @@ export default function VirtualKeySheet({ virtualKey, teams, customers, defaultT
 											</FormItem>
 										)}
 									/>
+
+									{watchedTokenMaxLimit !== undefined && (
+										<div className="grid grid-cols-2 gap-3">
+											<FormField
+												control={form.control}
+												name="inputTokenWeight"
+												render={({ field }) => (
+													<FormItem>
+														<Label htmlFor="inputTokenWeight" className="text-sm font-normal">
+															Input Token Weight
+														</Label>
+														<Input
+															id="inputTokenWeight"
+															type="number"
+															min="0"
+															step="0.1"
+															placeholder="1.0"
+															value={field.value ?? ""}
+															onChange={(e) => field.onChange(e.target.value === "" ? undefined : Number(e.target.value))}
+														/>
+														<FormMessage />
+													</FormItem>
+												)}
+											/>
+											<FormField
+												control={form.control}
+												name="outputTokenWeight"
+												render={({ field }) => (
+													<FormItem>
+														<Label htmlFor="outputTokenWeight" className="text-sm font-normal">
+															Output Token Weight
+														</Label>
+														<Input
+															id="outputTokenWeight"
+															type="number"
+															min="0"
+															step="0.1"
+															placeholder="1.0"
+															value={field.value ?? ""}
+															onChange={(e) => field.onChange(e.target.value === "" ? undefined : Number(e.target.value))}
+														/>
+														<FormMessage />
+													</FormItem>
+												)}
+											/>
+										</div>
+									)}
 
 									<FormField
 										control={form.control}

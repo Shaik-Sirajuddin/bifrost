@@ -1667,12 +1667,15 @@ func (p *GovernancePlugin) postHookWorker(result *schemas.BifrostResponse, bifro
 			cost = p.modelCatalog.CalculateCost(result, pricingScopes)
 		}
 		tokensUsed := 0
+		var promptTokens, completionTokens int
 		// The request failed/was cancelled but the provider still
 		// processed tokens (carried on BifrostError.ExtraFields.BilledUsage).
 		// Bill those tokens — Anthropic charges us for them regardless.
 		if result == nil && bifrostErr != nil && bifrostErr.ExtraFields.BilledUsage != nil {
 			billedUsage := bifrostErr.ExtraFields.BilledUsage
 			tokensUsed = billedUsage.TotalTokens
+			promptTokens = billedUsage.PromptTokens
+			completionTokens = billedUsage.CompletionTokens
 			billedReason = "partial_usage_on_error"
 			if p.modelCatalog != nil {
 				cost = p.modelCatalog.CalculateCostForUsage(billedUsage, provider, model, requestType, pricingScopes)
@@ -1681,45 +1684,94 @@ func (p *GovernancePlugin) postHookWorker(result *schemas.BifrostResponse, bifro
 		if result != nil {
 			switch {
 			case result.TextCompletionResponse != nil && result.TextCompletionResponse.Usage != nil:
-				tokensUsed = result.TextCompletionResponse.Usage.TotalTokens
+				u := result.TextCompletionResponse.Usage
+				tokensUsed, promptTokens, completionTokens = u.TotalTokens, u.PromptTokens, u.CompletionTokens
 			case result.ChatResponse != nil && result.ChatResponse.Usage != nil:
-				tokensUsed = result.ChatResponse.Usage.TotalTokens
+				u := result.ChatResponse.Usage
+				tokensUsed, promptTokens, completionTokens = u.TotalTokens, u.PromptTokens, u.CompletionTokens
 			case result.ResponsesResponse != nil && result.ResponsesResponse.Usage != nil:
-				tokensUsed = result.ResponsesResponse.Usage.TotalTokens
+				u := result.ResponsesResponse.Usage
+				tokensUsed, promptTokens, completionTokens = u.TotalTokens, u.InputTokens, u.OutputTokens
 			case result.ResponsesStreamResponse != nil && result.ResponsesStreamResponse.Response != nil && result.ResponsesStreamResponse.Response.Usage != nil:
-				tokensUsed = result.ResponsesStreamResponse.Response.Usage.TotalTokens
+				u := result.ResponsesStreamResponse.Response.Usage
+				tokensUsed, promptTokens, completionTokens = u.TotalTokens, u.InputTokens, u.OutputTokens
 			case result.EmbeddingResponse != nil && result.EmbeddingResponse.Usage != nil:
-				tokensUsed = result.EmbeddingResponse.Usage.TotalTokens
+				u := result.EmbeddingResponse.Usage
+				tokensUsed, promptTokens, completionTokens = u.TotalTokens, u.PromptTokens, u.CompletionTokens
 			case result.SpeechResponse != nil && result.SpeechResponse.Usage != nil:
-				tokensUsed = result.SpeechResponse.Usage.TotalTokens
+				u := result.SpeechResponse.Usage
+				tokensUsed, promptTokens, completionTokens = u.TotalTokens, u.InputTokens, u.OutputTokens
 			case result.SpeechStreamResponse != nil && result.SpeechStreamResponse.Usage != nil:
-				tokensUsed = result.SpeechStreamResponse.Usage.TotalTokens
+				u := result.SpeechStreamResponse.Usage
+				tokensUsed, promptTokens, completionTokens = u.TotalTokens, u.InputTokens, u.OutputTokens
 			case result.TranscriptionResponse != nil && result.TranscriptionResponse.Usage != nil && result.TranscriptionResponse.Usage.TotalTokens != nil:
-				tokensUsed = *result.TranscriptionResponse.Usage.TotalTokens
+				u := result.TranscriptionResponse.Usage
+				tokensUsed = *u.TotalTokens
+				if u.InputTokens != nil {
+					promptTokens = *u.InputTokens
+				}
+				if u.OutputTokens != nil {
+					completionTokens = *u.OutputTokens
+				}
 			case result.TranscriptionStreamResponse != nil && result.TranscriptionStreamResponse.Usage != nil && result.TranscriptionStreamResponse.Usage.TotalTokens != nil:
-				tokensUsed = *result.TranscriptionStreamResponse.Usage.TotalTokens
+				u := result.TranscriptionStreamResponse.Usage
+				tokensUsed = *u.TotalTokens
+				if u.InputTokens != nil {
+					promptTokens = *u.InputTokens
+				}
+				if u.OutputTokens != nil {
+					completionTokens = *u.OutputTokens
+				}
 			case result.PassthroughResponse != nil:
 				if su := result.PassthroughResponse.PassthroughUsage; su != nil && su.LLMUsage != nil {
-					tokensUsed = su.LLMUsage.TotalTokens
+					tokensUsed, promptTokens, completionTokens = su.LLMUsage.TotalTokens, su.LLMUsage.PromptTokens, su.LLMUsage.CompletionTokens
 				}
 			}
 		}
 
+		// Some providers report a TotalTokens that doesn't equal PromptTokens+CompletionTokens
+		// (e.g. reasoning/thinking tokens folded into the total but not the output split), or
+		// omit the prompt/completion split entirely (nil-guarded above for transcription), or
+		// omit TotalTokens itself while still populating the split (e.g. Cohere embeddings), or
+		// report a completion count alone that exceeds the total (malformed/inconsistent usage).
+		// Clamp completionTokens into [0, tokensUsed] and derive promptTokens as the remainder so
+		// promptTokens+completionTokens always equals tokensUsed exactly, both stay non-negative,
+		// and unweighted (default) rate-limit accounting always matches the provider-reported
+		// total - the backward-compat guarantee this feature makes. Weighted accounting degrades
+		// to counting any unattributed remainder at the input weight instead of silently dropping
+		// or over-counting it.
+		if tokensUsed < 0 {
+			// A provider reporting a negative TotalTokens is malformed input at the trust
+			// boundary (this whole block exists to tolerate inconsistent provider usage
+			// data) - treat as no usage rather than let a negative total flow into
+			// promptTokens and decrement the rate-limit counter.
+			tokensUsed = 0
+		}
+		if completionTokens > tokensUsed {
+			completionTokens = tokensUsed
+		}
+		if completionTokens < 0 {
+			completionTokens = 0
+		}
+		promptTokens = tokensUsed - completionTokens
+
 		// Create usage update for tracker (business logic)
 		usageUpdate := &UsageUpdate{
-			VirtualKey:    virtualKey,
-			Provider:      provider,
-			Model:         model,
-			Success:       success,
-			TokensUsed:    int64(tokensUsed),
-			Cost:          cost,
-			RequestID:     requestID,
-			UserID:        userID,
-			IsStreaming:   isStreaming,
-			IsFinalChunk:  isFinalChunk,
-			HasUsageData:  tokensUsed > 0 || cost > 0,
-			AttemptNumber: attemptNumber,
-			BilledReason:  billedReason,
+			VirtualKey:           virtualKey,
+			Provider:             provider,
+			Model:                model,
+			Success:              success,
+			TokensUsed:           int64(tokensUsed),
+			PromptTokensUsed:     int64(promptTokens),
+			CompletionTokensUsed: int64(completionTokens),
+			Cost:                 cost,
+			RequestID:            requestID,
+			UserID:               userID,
+			IsStreaming:          isStreaming,
+			IsFinalChunk:         isFinalChunk,
+			HasUsageData:         tokensUsed > 0 || cost > 0,
+			AttemptNumber:        attemptNumber,
+			BilledReason:         billedReason,
 		}
 
 		// Queue usage update asynchronously using tracker

@@ -149,16 +149,17 @@ func TestUsageTracker_UpdateUsage_StreamingOptimization(t *testing.T) {
 
 	// First streaming chunk (not final, has usage data)
 	update1 := &UsageUpdate{
-		VirtualKey:   "sk-bf-test",
-		Provider:     schemas.OpenAI,
-		Model:        "gpt-4",
-		Success:      true,
-		TokensUsed:   50,
-		Cost:         0.0, // No cost on non-final chunks
-		RequestID:    "req-123",
-		IsStreaming:  true,
-		IsFinalChunk: false,
-		HasUsageData: true,
+		VirtualKey:       "sk-bf-test",
+		Provider:         schemas.OpenAI,
+		Model:            "gpt-4",
+		Success:          true,
+		TokensUsed:       50,
+		PromptTokensUsed: 50,
+		Cost:             0.0, // No cost on non-final chunks
+		RequestID:        "req-123",
+		IsStreaming:      true,
+		IsFinalChunk:     false,
+		HasUsageData:     true,
 	}
 
 	tracker.UpdateUsage(context.Background(), update1)

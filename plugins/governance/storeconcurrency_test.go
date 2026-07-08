@@ -73,7 +73,7 @@ func TestBumpRateLimitUsage_NoLostIncrements(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < perGoroutine; j++ {
-				assert.NoError(t, store.BumpRateLimitUsage(context.Background(), rlID, tokensPerCall, true, true))
+				assert.NoError(t, store.BumpRateLimitUsage(context.Background(), rlID, tokensPerCall, 0, true, true))
 			}
 		}()
 	}

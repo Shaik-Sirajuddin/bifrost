@@ -68,15 +68,16 @@ func (f *accountingFixture) tokens() int64 {
 // acctUpdate builds a terminal (non-streaming) usage update for accounting tests.
 func acctUpdate(requestID string, attempt int, success bool, cost float64, tokens int64) *UsageUpdate {
 	return &UsageUpdate{
-		VirtualKey:    "sk-bf-acct",
-		Provider:      schemas.OpenAI,
-		Model:         "gpt-4",
-		Success:       success,
-		TokensUsed:    tokens,
-		Cost:          cost,
-		RequestID:     requestID,
-		AttemptNumber: attempt,
-		HasUsageData:  tokens > 0 || cost > 0,
+		VirtualKey:       "sk-bf-acct",
+		Provider:         schemas.OpenAI,
+		Model:            "gpt-4",
+		Success:          success,
+		TokensUsed:       tokens,
+		PromptTokensUsed: tokens,
+		Cost:             cost,
+		RequestID:        requestID,
+		AttemptNumber:    attempt,
+		HasUsageData:     tokens > 0 || cost > 0,
 	}
 }
 
@@ -104,7 +105,7 @@ func TestAccounting_StreamingChunksAccumulate(t *testing.T) {
 
 	nonFinal := &UsageUpdate{
 		VirtualKey: "sk-bf-acct", Provider: schemas.OpenAI, Model: "gpt-4",
-		Success: true, TokensUsed: 50, Cost: 0.0, RequestID: "req-s", AttemptNumber: 0,
+		Success: true, TokensUsed: 50, PromptTokensUsed: 50, Cost: 0.0, RequestID: "req-s", AttemptNumber: 0,
 		IsStreaming: true, IsFinalChunk: false, HasUsageData: true,
 	}
 	final := &UsageUpdate{
@@ -128,7 +129,7 @@ func TestAccounting_FailedStreamingBilledOnceAndAccumulates(t *testing.T) {
 	mk := func(reqID string) *UsageUpdate {
 		return &UsageUpdate{
 			VirtualKey: "sk-bf-acct", Provider: schemas.OpenAI, Model: "gpt-4",
-			Success: false, TokensUsed: 200, Cost: 8.0, RequestID: reqID, AttemptNumber: 0,
+			Success: false, TokensUsed: 200, PromptTokensUsed: 200, Cost: 8.0, RequestID: reqID, AttemptNumber: 0,
 			IsStreaming: true, IsFinalChunk: true, HasUsageData: true,
 		}
 	}

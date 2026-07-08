@@ -17,6 +17,9 @@ export interface AccessProfileRateLimitLine {
 	request_reset_duration?: string;
 	request_current_usage?: number;
 	request_last_reset?: string;
+	// Optional weighted token accounting; omitted defaults to 1.0 (flat total-token accounting). Must be > 0, no upper bound.
+	input_token_weight?: number;
+	output_token_weight?: number;
 }
 
 export interface UserAccessProfile {

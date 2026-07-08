@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import MultiBudgetLines, { BudgetLineEntry } from "@/components/ui/multibudgets";
 import NumberAndSelect from "@/components/ui/numberAndSelect";
@@ -38,6 +39,9 @@ const formSchema = z.object({
 	tokenResetDuration: z.string().optional(),
 	requestMaxLimit: z.number().int().nonnegative().optional(),
 	requestResetDuration: z.string().optional(),
+	// Optional weighted token accounting; omitted defaults to 1.0. Must be > 0, no upper bound.
+	inputTokenWeight: z.number().positive().optional(),
+	outputTokenWeight: z.number().positive().optional(),
 });
 
 type FormData = z.infer<typeof formSchema>;
@@ -49,6 +53,8 @@ const DEFAULT_GOVERNANCE_FORM_VALUES: FormData = {
 	tokenResetDuration: "1h",
 	requestMaxLimit: undefined,
 	requestResetDuration: "1h",
+	inputTokenWeight: undefined,
+	outputTokenWeight: undefined,
 };
 
 function governanceToFormValues(provGov: ProviderGovernance | undefined): FormData {
@@ -64,6 +70,8 @@ function governanceToFormValues(provGov: ProviderGovernance | undefined): FormDa
 		tokenResetDuration: provGov.rate_limit?.token_reset_duration || "1h",
 		requestMaxLimit: provGov.rate_limit?.request_max_limit ?? undefined,
 		requestResetDuration: provGov.rate_limit?.request_reset_duration || "1h",
+		inputTokenWeight: provGov.rate_limit?.input_token_weight ?? undefined,
+		outputTokenWeight: provGov.rate_limit?.output_token_weight ?? undefined,
 	};
 }
 
@@ -136,6 +144,8 @@ export function GovernanceFormFragment({ provider }: GovernanceFormFragmentProps
 						token_reset_duration?: string | null;
 						request_max_limit?: number | null;
 						request_reset_duration?: string | null;
+						input_token_weight?: number | null;
+						output_token_weight?: number | null;
 				  }
 				| undefined;
 			if (hasRateLimit) {
@@ -144,6 +154,8 @@ export function GovernanceFormFragment({ provider }: GovernanceFormFragmentProps
 					token_reset_duration: data.tokenMaxLimit !== undefined ? data.tokenResetDuration || "1h" : null,
 					request_max_limit: data.requestMaxLimit ?? null,
 					request_reset_duration: data.requestMaxLimit !== undefined ? data.requestResetDuration || "1h" : null,
+					input_token_weight: data.inputTokenWeight ?? null,
+					output_token_weight: data.outputTokenWeight ?? null,
 				};
 			} else if (hadRateLimit) {
 				rateLimitPayload = {};
@@ -223,6 +235,46 @@ export function GovernanceFormFragment({ provider }: GovernanceFormFragmentProps
 						onChangeNumber={(value) => form.setValue("tokenMaxLimit", value, { shouldDirty: true })}
 						onChangeSelect={(value) => form.setValue("tokenResetDuration", value, { shouldDirty: true })}
 					/>
+					{form.watch("tokenMaxLimit") !== undefined && (
+						<div className="grid grid-cols-2 gap-3">
+							<div>
+								<Label htmlFor="providerInputTokenWeight" className="text-sm font-normal">
+									Input Token Weight
+								</Label>
+								<Input
+									id="providerInputTokenWeight"
+									type="number"
+									min="0"
+									step="0.1"
+									placeholder="1.0"
+									value={form.watch("inputTokenWeight") ?? ""}
+									onChange={(e) =>
+										form.setValue("inputTokenWeight", e.target.value === "" ? undefined : Number(e.target.value), {
+											shouldDirty: true,
+										})
+									}
+								/>
+							</div>
+							<div>
+								<Label htmlFor="providerOutputTokenWeight" className="text-sm font-normal">
+									Output Token Weight
+								</Label>
+								<Input
+									id="providerOutputTokenWeight"
+									type="number"
+									min="0"
+									step="0.1"
+									placeholder="1.0"
+									value={form.watch("outputTokenWeight") ?? ""}
+									onChange={(e) =>
+										form.setValue("outputTokenWeight", e.target.value === "" ? undefined : Number(e.target.value), {
+											shouldDirty: true,
+										})
+									}
+								/>
+							</div>
+						</div>
+					)}
 					<NumberAndSelect
 						id="providerRequestMaxLimit"
 						labelClassName="font-normal"
