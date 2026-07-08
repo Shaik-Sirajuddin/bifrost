@@ -556,7 +556,7 @@ func TestStore_UpdateProviderRateLimitUsage_NoConfig(t *testing.T) {
 	store, err := NewLocalGovernanceStore(context.Background(), logger, nil, &configstore.GovernanceConfig{}, nil)
 	require.NoError(t, err)
 
-	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "", schemas.OpenAI, 1000, true, true)
+	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "", schemas.OpenAI, 1000, 0, true, true)
 	assert.NoError(t, err, "Should not error when no provider config exists")
 }
 
@@ -570,7 +570,7 @@ func TestStore_UpdateProviderRateLimitUsage_UpdatesTokens(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "", schemas.OpenAI, 5000, true, false)
+	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "", schemas.OpenAI, 5000, 0, true, false)
 	assert.NoError(t, err, "Should successfully update provider token usage")
 
 	// Check that tokens were updated but requests were not
@@ -579,7 +579,7 @@ func TestStore_UpdateProviderRateLimitUsage_UpdatesTokens(t *testing.T) {
 	assert.Equal(t, DecisionAllow, decision)
 
 	// Update tokens to exceed
-	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "", schemas.OpenAI, 6000, true, false)
+	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "", schemas.OpenAI, 6000, 0, true, false)
 	assert.NoError(t, err, "Should successfully update provider token usage even when exceeding")
 
 	// Now should be exceeded
@@ -601,7 +601,7 @@ func TestStore_UpdateProviderRateLimitUsage_UpdatesRequests(t *testing.T) {
 
 	// Update requests 500 times
 	for i := 0; i < 500; i++ {
-		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "", schemas.OpenAI, 0, false, true)
+		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "", schemas.OpenAI, 0, 0, false, true)
 		assert.NoError(t, err, "Should successfully update provider request usage")
 	}
 
@@ -612,7 +612,7 @@ func TestStore_UpdateProviderRateLimitUsage_UpdatesRequests(t *testing.T) {
 
 	// Update 500 more times to exceed
 	for i := 0; i < 500; i++ {
-		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "", schemas.OpenAI, 0, false, true)
+		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "", schemas.OpenAI, 0, 0, false, true)
 		assert.NoError(t, err, "Should successfully update provider request usage even when exceeding")
 	}
 
@@ -709,7 +709,7 @@ func TestStore_UpdateModelRateLimitUsage_NoConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	provider := schemas.OpenAI
-	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 1000, true, true)
+	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 1000, 0, true, true)
 	assert.NoError(t, err, "Should not error when no model config exists")
 }
 
@@ -724,7 +724,7 @@ func TestStore_UpdateModelRateLimitUsage_ModelOnly_UpdatesUsage(t *testing.T) {
 	require.NoError(t, err)
 
 	provider := schemas.OpenAI
-	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 5000, true, false)
+	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 5000, 0, true, false)
 	assert.NoError(t, err, "Should successfully update model token usage")
 
 	// Should still be within limit
@@ -733,7 +733,7 @@ func TestStore_UpdateModelRateLimitUsage_ModelOnly_UpdatesUsage(t *testing.T) {
 	assert.Equal(t, DecisionAllow, decision)
 
 	// Update to exceed
-	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 6000, true, false)
+	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 6000, 0, true, false)
 	assert.NoError(t, err, "Should successfully update model token usage even when exceeding")
 
 	// Now should be exceeded
@@ -759,7 +759,7 @@ func TestStore_UpdateModelRateLimitUsage_ModelWithProvider_UpdatesUsage(t *testi
 	require.NoError(t, err)
 
 	provider := schemas.OpenAI
-	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 5000, true, false)
+	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 5000, 0, true, false)
 	assert.NoError(t, err, "Should successfully update both model-only and model+provider token usage")
 
 	// Should still be within limit
@@ -768,7 +768,7 @@ func TestStore_UpdateModelRateLimitUsage_ModelWithProvider_UpdatesUsage(t *testi
 	assert.Equal(t, DecisionAllow, decision)
 
 	// Update to exceed model-only rate limit (should fail at model-only level)
-	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 6000, true, false)
+	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 6000, 0, true, false)
 	assert.NoError(t, err, "Should successfully update model token usage even when exceeding")
 
 	// Now should be exceeded (model-only rate limit exceeded)
@@ -791,7 +791,7 @@ func TestStore_UpdateModelRateLimitUsage_ModelOnly_UpdatesUsage_RequestLimit(t *
 	provider := schemas.OpenAI
 	// Update requests 500 times
 	for range 500 {
-		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 0, false, true)
+		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 0, 0, false, true)
 		assert.NoError(t, err, "Should successfully update model request usage")
 	}
 
@@ -802,7 +802,7 @@ func TestStore_UpdateModelRateLimitUsage_ModelOnly_UpdatesUsage_RequestLimit(t *
 
 	// Update 500 more times to exceed
 	for range 500 {
-		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 0, false, true)
+		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 0, 0, false, true)
 		assert.NoError(t, err, "Should successfully update model request usage even when exceeding")
 	}
 
@@ -831,7 +831,7 @@ func TestStore_UpdateModelRateLimitUsage_ModelWithProvider_UpdatesUsage_RequestL
 	provider := schemas.OpenAI
 	// Update requests 500 times (should update both model-only and model+provider)
 	for range 500 {
-		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 0, false, true)
+		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 0, 0, false, true)
 		assert.NoError(t, err, "Should successfully update both model-only and model+provider request usage")
 	}
 
@@ -842,7 +842,7 @@ func TestStore_UpdateModelRateLimitUsage_ModelWithProvider_UpdatesUsage_RequestL
 
 	// Update 500 more times to exceed model-only rate limit
 	for range 500 {
-		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 0, false, true)
+		err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4", provider, 0, 0, false, true)
 		assert.NoError(t, err, "Should successfully update model request usage even when exceeding")
 	}
 
@@ -2398,7 +2398,7 @@ func TestStore_UpdateModelRateLimitUsage_CrossProviderModelMatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Update token usage with prefixed model name
-	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "openai/gpt-4o", schemas.OpenRouter, 100, true, false)
+	err = store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "openai/gpt-4o", schemas.OpenRouter, 100, 0, true, false)
 	assert.NoError(t, err, "Should successfully update rate limit via cross-provider match")
 
 	// Rate limit should now be exceeded
@@ -2516,7 +2516,7 @@ func TestStore_UpdateProviderModelUsage_BumpsAllModelsWildcard(t *testing.T) {
 	require.Equal(t, DecisionAllow, decision)
 
 	// Record usage for a (different) model on the provider — must bump the "*:openai" config.
-	require.NoError(t, store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4o", schemas.OpenAI, 150, true, true))
+	require.NoError(t, store.UpdateProviderAndModelRateLimitUsageInMemory(context.Background(), "gpt-4o", schemas.OpenAI, 150, 0, true, true))
 
 	// Now the all-models rate limit trips for any model on the provider.
 	decision, err = store.CheckModelRateLimit(context.Background(), &EvaluationRequest{Model: "gpt-4o-mini", Provider: schemas.OpenAI}, nil, nil)
@@ -2676,7 +2676,7 @@ func TestStore_VirtualKeyScopedModel_RecordThenCheck_TokenLimitTrips(t *testing.
 
 	// Record usage above the limit (what the tracker does post-response). Provider differs from
 	// the config's (which is all-providers), exercising the model-only scoped lookup.
-	require.NoError(t, store.UpdateScopedModelRateLimitUsageInMemory(context.Background(), configstoreTables.ModelConfigScopeVirtualKey, vk.ID, "claude-opus-4-7", schemas.Anthropic, 150, true, true))
+	require.NoError(t, store.UpdateScopedModelRateLimitUsageInMemory(context.Background(), configstoreTables.ModelConfigScopeVirtualKey, vk.ID, "claude-opus-4-7", schemas.Anthropic, 150, 0, true, true))
 
 	// Now the scoped check must trip.
 	decision, err = store.CheckScopedModelRateLimit(context.Background(), configstoreTables.ModelConfigScopeVirtualKey, vk.ID, req, nil, nil)

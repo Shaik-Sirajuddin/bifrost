@@ -436,6 +436,7 @@ var configstoreMigrationSteps = []migrationStep{
 	{IDs: []string{"add_model_pricing_is_deprecated_column"}, run: migrationAddModelPricingIsDeprecatedColumn},
 	{IDs: []string{"add_mcp_client_tool_execution_timeout_column"}, run: migrationAddMCPClientToolExecutionTimeoutColumn},
 	{IDs: []string{"add_virtual_key_expires_at_column"}, run: migrationAddVirtualKeyExpiresAtColumn},
+	{IDs: []string{"add_rate_limit_token_weight_columns"}, run: migrationAddRateLimitTokenWeightColumns},
 }
 
 // quoteSQLiteIdentifier quotes a SQLite identifier, escaping any double quotes.
@@ -10309,6 +10310,41 @@ func migrationAddVirtualKeyExpiresAtColumn(ctx context.Context, db *gorm.DB, log
 		Rollback: func(tx *gorm.DB) error {
 			tx = tx.WithContext(ctx)
 			return dropColumnIfExists(tx, logger, &tables.TableVirtualKey{}, "expires_at")
+		},
+	}})
+	if err := m.Migrate(); err != nil {
+		return fmt.Errorf("error running %s migration: %w", migrationName, err)
+	}
+	return nil
+}
+
+// migrationAddRateLimitTokenWeightColumns adds the optional input/output token
+// cost weight columns to the rate limits table (issue #3834). Existing rows
+// are left NULL, which is treated as weight 1.0 at consumption time -
+// identical to today's flat total-token accounting. No config_hash backfill is
+// needed: GenerateRateLimitHash (clientconfig.go) skips nil weight fields when
+// hashing, so a NULL weight on an existing row hashes identically before and
+// after this migration and no existing config.json entry is spuriously
+// flagged as changed on next sync.
+func migrationAddRateLimitTokenWeightColumns(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
+	migrationName := "add_rate_limit_token_weight_columns"
+	logger.Info("[configstore] starting migration %s", migrationName)
+	defer logger.Info("[configstore] finished migration %s", migrationName)
+	m := migrator.New(db, migrator.DefaultOptions, []*migrator.Migration{{
+		ID: migrationName,
+		Migrate: func(tx *gorm.DB) error {
+			tx = tx.WithContext(ctx)
+			if err := addColumnIfNotExists(tx, logger, &tables.TableRateLimit{}, "input_token_weight"); err != nil {
+				return err
+			}
+			return addColumnIfNotExists(tx, logger, &tables.TableRateLimit{}, "output_token_weight")
+		},
+		Rollback: func(tx *gorm.DB) error {
+			tx = tx.WithContext(ctx)
+			if err := dropColumnIfExists(tx, logger, &tables.TableRateLimit{}, "input_token_weight"); err != nil {
+				return err
+			}
+			return dropColumnIfExists(tx, logger, &tables.TableRateLimit{}, "output_token_weight")
 		},
 	}})
 	if err := m.Migrate(); err != nil {

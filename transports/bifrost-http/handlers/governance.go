@@ -307,18 +307,22 @@ type UpdateRoutingRuleRequest struct {
 
 // CreateRateLimitRequest represents the request body for creating a rate limit using flexible approach
 type CreateRateLimitRequest struct {
-	TokenMaxLimit        *int64  `json:"token_max_limit,omitempty"`        // Maximum tokens allowed
-	TokenResetDuration   *string `json:"token_reset_duration,omitempty"`   // e.g., "30s", "5m", "1h", "1d", "1w", "1M"
-	RequestMaxLimit      *int64  `json:"request_max_limit,omitempty"`      // Maximum requests allowed
-	RequestResetDuration *string `json:"request_reset_duration,omitempty"` // e.g., "30s", "5m", "1h", "1d", "1w", "1M"
+	TokenMaxLimit        *int64   `json:"token_max_limit,omitempty"`        // Maximum tokens allowed
+	TokenResetDuration   *string  `json:"token_reset_duration,omitempty"`   // e.g., "30s", "5m", "1h", "1d", "1w", "1M"
+	RequestMaxLimit      *int64   `json:"request_max_limit,omitempty"`      // Maximum requests allowed
+	RequestResetDuration *string  `json:"request_reset_duration,omitempty"` // e.g., "30s", "5m", "1h", "1d", "1w", "1M"
+	InputTokenWeight     *float64 `json:"input_token_weight,omitempty"`     // Optional cost weight applied to prompt tokens; nil defaults to 1.0
+	OutputTokenWeight    *float64 `json:"output_token_weight,omitempty"`    // Optional cost weight applied to completion tokens; nil defaults to 1.0
 }
 
 // UpdateRateLimitRequest represents the request body for updating a rate limit using flexible approach
 type UpdateRateLimitRequest struct {
-	TokenMaxLimit        *int64  `json:"token_max_limit,omitempty"`        // Maximum tokens allowed
-	TokenResetDuration   *string `json:"token_reset_duration,omitempty"`   // e.g., "30s", "5m", "1h", "1d", "1w", "1M"
-	RequestMaxLimit      *int64  `json:"request_max_limit,omitempty"`      // Maximum requests allowed
-	RequestResetDuration *string `json:"request_reset_duration,omitempty"` // e.g., "30s", "5m", "1h", "1d", "1w", "1M"
+	TokenMaxLimit        *int64   `json:"token_max_limit,omitempty"`        // Maximum tokens allowed
+	TokenResetDuration   *string  `json:"token_reset_duration,omitempty"`   // e.g., "30s", "5m", "1h", "1d", "1w", "1M"
+	RequestMaxLimit      *int64   `json:"request_max_limit,omitempty"`      // Maximum requests allowed
+	RequestResetDuration *string  `json:"request_reset_duration,omitempty"` // e.g., "30s", "5m", "1h", "1d", "1w", "1M"
+	InputTokenWeight     *float64 `json:"input_token_weight,omitempty"`     // Optional cost weight applied to prompt tokens; nil defaults to 1.0
+	OutputTokenWeight    *float64 `json:"output_token_weight,omitempty"`    // Optional cost weight applied to completion tokens; nil defaults to 1.0
 }
 
 func isBudgetRemovalRequest(req *UpdateBudgetRequest) bool {
@@ -458,7 +462,8 @@ func coerceLegacyBudget(req *UpdateBudgetRequest, existing *configstoreTables.Ta
 
 func isRateLimitRemovalRequest(req *UpdateRateLimitRequest) bool {
 	return req != nil && req.TokenMaxLimit == nil && req.RequestMaxLimit == nil &&
-		req.TokenResetDuration == nil && req.RequestResetDuration == nil
+		req.TokenResetDuration == nil && req.RequestResetDuration == nil &&
+		req.InputTokenWeight == nil && req.OutputTokenWeight == nil
 }
 
 // reconcileModelConfigBudgets upserts the desired set of budgets owned by a model config
@@ -701,10 +706,29 @@ func (h *GovernanceHandler) reconcileVKModelConfig(ctx context.Context, tx *gorm
 			if err := tx.First(&rl, "id = ?", *mc.RateLimitID).Error; err != nil {
 				return err
 			}
-			rl.TokenMaxLimit = d.rateLimit.TokenMaxLimit
-			rl.TokenResetDuration = d.rateLimit.TokenResetDuration
-			rl.RequestMaxLimit = d.rateLimit.RequestMaxLimit
-			rl.RequestResetDuration = d.rateLimit.RequestResetDuration
+			// All six fields are independently settable on an update (a caller may resend
+			// only the field(s) it wants to change), so each must preserve the existing
+			// value when omitted from the request rather than being blindly nulled out -
+			// otherwise e.g. a weight-only update would silently wipe the token/request
+			// limits (or vice versa), disabling enforcement while the row stays "configured".
+			if d.rateLimit.TokenMaxLimit != nil {
+				rl.TokenMaxLimit = d.rateLimit.TokenMaxLimit
+			}
+			if d.rateLimit.TokenResetDuration != nil {
+				rl.TokenResetDuration = d.rateLimit.TokenResetDuration
+			}
+			if d.rateLimit.RequestMaxLimit != nil {
+				rl.RequestMaxLimit = d.rateLimit.RequestMaxLimit
+			}
+			if d.rateLimit.RequestResetDuration != nil {
+				rl.RequestResetDuration = d.rateLimit.RequestResetDuration
+			}
+			if d.rateLimit.InputTokenWeight != nil {
+				rl.InputTokenWeight = d.rateLimit.InputTokenWeight
+			}
+			if d.rateLimit.OutputTokenWeight != nil {
+				rl.OutputTokenWeight = d.rateLimit.OutputTokenWeight
+			}
 			if err := validateRateLimit(&rl); err != nil {
 				return err
 			}
@@ -719,6 +743,8 @@ func (h *GovernanceHandler) reconcileVKModelConfig(ctx context.Context, tx *gorm
 				TokenResetDuration:   d.rateLimit.TokenResetDuration,
 				RequestMaxLimit:      d.rateLimit.RequestMaxLimit,
 				RequestResetDuration: d.rateLimit.RequestResetDuration,
+				InputTokenWeight:     d.rateLimit.InputTokenWeight,
+				OutputTokenWeight:    d.rateLimit.OutputTokenWeight,
 				TokenLastReset:       time.Now(),
 				RequestLastReset:     time.Now(),
 			}
@@ -806,14 +832,16 @@ func (h *GovernanceHandler) deleteVKModelConfig(ctx context.Context, tx *gorm.DB
 	return nil
 }
 
-// rateLimitFromRequestFields builds a transient TableRateLimit (limit/duration fields only)
-// for the VK governance sync, from the shared rate-limit request field shape.
-func rateLimitFromRequestFields(tokenMax *int64, tokenDur *string, reqMax *int64, reqDur *string) *configstoreTables.TableRateLimit {
+// rateLimitFromRequestFields builds a transient TableRateLimit (limit/duration/weight fields
+// only) for the VK governance sync, from the shared rate-limit request field shape.
+func rateLimitFromRequestFields(tokenMax *int64, tokenDur *string, reqMax *int64, reqDur *string, inputWeight *float64, outputWeight *float64) *configstoreTables.TableRateLimit {
 	return &configstoreTables.TableRateLimit{
 		TokenMaxLimit:        tokenMax,
 		TokenResetDuration:   tokenDur,
 		RequestMaxLimit:      reqMax,
 		RequestResetDuration: reqDur,
+		InputTokenWeight:     inputWeight,
+		OutputTokenWeight:    outputWeight,
 	}
 }
 
@@ -1391,7 +1419,7 @@ func (h *GovernanceHandler) createVirtualKey(ctx *fasthttp.RequestCtx) {
 				providerNameStr := string(providerName)
 				var pcRateLimit *configstoreTables.TableRateLimit
 				if pc.RateLimit != nil {
-					pcRateLimit = rateLimitFromRequestFields(pc.RateLimit.TokenMaxLimit, pc.RateLimit.TokenResetDuration, pc.RateLimit.RequestMaxLimit, pc.RateLimit.RequestResetDuration)
+					pcRateLimit = rateLimitFromRequestFields(pc.RateLimit.TokenMaxLimit, pc.RateLimit.TokenResetDuration, pc.RateLimit.RequestMaxLimit, pc.RateLimit.RequestResetDuration, pc.RateLimit.InputTokenWeight, pc.RateLimit.OutputTokenWeight)
 				}
 				vkGovProviders = append(vkGovProviders, vkModelConfigDesired{
 					provider:          &providerNameStr,
@@ -1405,7 +1433,7 @@ func (h *GovernanceHandler) createVirtualKey(ctx *fasthttp.RequestCtx) {
 		// Fold VK top-level + per-provider governance into VK-scoped model configs.
 		var topRateLimit *configstoreTables.TableRateLimit
 		if req.RateLimit != nil {
-			topRateLimit = rateLimitFromRequestFields(req.RateLimit.TokenMaxLimit, req.RateLimit.TokenResetDuration, req.RateLimit.RequestMaxLimit, req.RateLimit.RequestResetDuration)
+			topRateLimit = rateLimitFromRequestFields(req.RateLimit.TokenMaxLimit, req.RateLimit.TokenResetDuration, req.RateLimit.RequestMaxLimit, req.RateLimit.RequestResetDuration, req.RateLimit.InputTokenWeight, req.RateLimit.OutputTokenWeight)
 		}
 		if err := h.syncVKGovernanceToModelConfigs(ctx, tx, &vk, vkModelConfigDesired{
 			budgetsProvided:   true,
@@ -1692,7 +1720,7 @@ func (h *GovernanceHandler) updateVirtualKey(ctx *fasthttp.RequestCtx) {
 					pName := string(providerName)
 					var pcRL *configstoreTables.TableRateLimit
 					if pc.RateLimit != nil {
-						pcRL = rateLimitFromRequestFields(pc.RateLimit.TokenMaxLimit, pc.RateLimit.TokenResetDuration, pc.RateLimit.RequestMaxLimit, pc.RateLimit.RequestResetDuration)
+						pcRL = rateLimitFromRequestFields(pc.RateLimit.TokenMaxLimit, pc.RateLimit.TokenResetDuration, pc.RateLimit.RequestMaxLimit, pc.RateLimit.RequestResetDuration, pc.RateLimit.InputTokenWeight, pc.RateLimit.OutputTokenWeight)
 					}
 					vkGovProviders = append(vkGovProviders, vkModelConfigDesired{
 						provider:          &pName,
@@ -1750,7 +1778,7 @@ func (h *GovernanceHandler) updateVirtualKey(ctx *fasthttp.RequestCtx) {
 						if isRateLimitRemovalRequest(pc.RateLimit) {
 							rlRemove = true
 						} else {
-							pcRL = rateLimitFromRequestFields(pc.RateLimit.TokenMaxLimit, pc.RateLimit.TokenResetDuration, pc.RateLimit.RequestMaxLimit, pc.RateLimit.RequestResetDuration)
+							pcRL = rateLimitFromRequestFields(pc.RateLimit.TokenMaxLimit, pc.RateLimit.TokenResetDuration, pc.RateLimit.RequestMaxLimit, pc.RateLimit.RequestResetDuration, pc.RateLimit.InputTokenWeight, pc.RateLimit.OutputTokenWeight)
 						}
 					}
 					vkGovProviders = append(vkGovProviders, vkModelConfigDesired{
@@ -1797,7 +1825,7 @@ func (h *GovernanceHandler) updateVirtualKey(ctx *fasthttp.RequestCtx) {
 			if isRateLimitRemovalRequest(req.RateLimit) {
 				top.rateLimitRemove = true
 			} else {
-				top.rateLimit = rateLimitFromRequestFields(req.RateLimit.TokenMaxLimit, req.RateLimit.TokenResetDuration, req.RateLimit.RequestMaxLimit, req.RateLimit.RequestResetDuration)
+				top.rateLimit = rateLimitFromRequestFields(req.RateLimit.TokenMaxLimit, req.RateLimit.TokenResetDuration, req.RateLimit.RequestMaxLimit, req.RateLimit.RequestResetDuration, req.RateLimit.InputTokenWeight, req.RateLimit.OutputTokenWeight)
 			}
 		}
 		if err := h.syncVKGovernanceToModelConfigs(ctx, tx, vk, top, vkGovProviders, req.ProviderConfigs != nil); err != nil {
@@ -2152,6 +2180,8 @@ func (h *GovernanceHandler) createTeam(ctx *fasthttp.RequestCtx) {
 			TokenResetDuration:   req.RateLimit.TokenResetDuration,
 			RequestMaxLimit:      req.RateLimit.RequestMaxLimit,
 			RequestResetDuration: req.RateLimit.RequestResetDuration,
+			InputTokenWeight:     req.RateLimit.InputTokenWeight,
+			OutputTokenWeight:    req.RateLimit.OutputTokenWeight,
 		}
 		if err := validateRateLimit(&rateLimit); err != nil {
 			SendError(ctx, 400, fmt.Sprintf("Invalid rate limit: %s", err.Error()))
@@ -2174,6 +2204,8 @@ func (h *GovernanceHandler) createTeam(ctx *fasthttp.RequestCtx) {
 				TokenResetDuration:   req.RateLimit.TokenResetDuration,
 				RequestMaxLimit:      req.RateLimit.RequestMaxLimit,
 				RequestResetDuration: req.RateLimit.RequestResetDuration,
+				InputTokenWeight:     req.RateLimit.InputTokenWeight,
+				OutputTokenWeight:    req.RateLimit.OutputTokenWeight,
 				TokenLastReset:       time.Now(),
 				RequestLastReset:     time.Now(),
 			}
@@ -2389,7 +2421,8 @@ func (h *GovernanceHandler) updateTeam(ctx *fasthttp.RequestCtx) {
 		// Handle rate limit updates
 		if req.RateLimit != nil {
 			// Check if rate limit values are empty - means remove rate limit (reset durations don't matter)
-			rateLimitIsEmpty := req.RateLimit.TokenMaxLimit == nil && req.RateLimit.RequestMaxLimit == nil
+			rateLimitIsEmpty := req.RateLimit.TokenMaxLimit == nil && req.RateLimit.RequestMaxLimit == nil &&
+				req.RateLimit.InputTokenWeight == nil && req.RateLimit.OutputTokenWeight == nil
 			if rateLimitIsEmpty {
 				// Mark rate limit for deletion after FK is removed
 				if team.RateLimitID != nil {
@@ -2403,10 +2436,29 @@ func (h *GovernanceHandler) updateTeam(ctx *fasthttp.RequestCtx) {
 				if err := tx.First(&rateLimit, "id = ?", *team.RateLimitID).Error; err != nil {
 					return err
 				}
-				rateLimit.TokenMaxLimit = req.RateLimit.TokenMaxLimit
-				rateLimit.TokenResetDuration = req.RateLimit.TokenResetDuration
-				rateLimit.RequestMaxLimit = req.RateLimit.RequestMaxLimit
-				rateLimit.RequestResetDuration = req.RateLimit.RequestResetDuration
+				// All six fields are independently settable on an update (a caller may resend
+				// only the field(s) it wants to change), so each must preserve the existing
+				// value when omitted from the request rather than being blindly nulled out -
+				// otherwise e.g. a weight-only update would silently wipe the token/request
+				// limits (or vice versa), disabling enforcement while the row stays "configured".
+				if req.RateLimit.TokenMaxLimit != nil {
+					rateLimit.TokenMaxLimit = req.RateLimit.TokenMaxLimit
+				}
+				if req.RateLimit.TokenResetDuration != nil {
+					rateLimit.TokenResetDuration = req.RateLimit.TokenResetDuration
+				}
+				if req.RateLimit.RequestMaxLimit != nil {
+					rateLimit.RequestMaxLimit = req.RateLimit.RequestMaxLimit
+				}
+				if req.RateLimit.RequestResetDuration != nil {
+					rateLimit.RequestResetDuration = req.RateLimit.RequestResetDuration
+				}
+				if req.RateLimit.InputTokenWeight != nil {
+					rateLimit.InputTokenWeight = req.RateLimit.InputTokenWeight
+				}
+				if req.RateLimit.OutputTokenWeight != nil {
+					rateLimit.OutputTokenWeight = req.RateLimit.OutputTokenWeight
+				}
 				if err := validateRateLimit(&rateLimit); err != nil {
 					return err
 				}
@@ -2422,6 +2474,8 @@ func (h *GovernanceHandler) updateTeam(ctx *fasthttp.RequestCtx) {
 					TokenResetDuration:   req.RateLimit.TokenResetDuration,
 					RequestMaxLimit:      req.RateLimit.RequestMaxLimit,
 					RequestResetDuration: req.RateLimit.RequestResetDuration,
+					InputTokenWeight:     req.RateLimit.InputTokenWeight,
+					OutputTokenWeight:    req.RateLimit.OutputTokenWeight,
 					TokenLastReset:       time.Now(),
 					RequestLastReset:     time.Now(),
 				}
@@ -2616,6 +2670,8 @@ func (h *GovernanceHandler) createCustomer(ctx *fasthttp.RequestCtx) {
 			TokenResetDuration:   req.RateLimit.TokenResetDuration,
 			RequestMaxLimit:      req.RateLimit.RequestMaxLimit,
 			RequestResetDuration: req.RateLimit.RequestResetDuration,
+			InputTokenWeight:     req.RateLimit.InputTokenWeight,
+			OutputTokenWeight:    req.RateLimit.OutputTokenWeight,
 		}
 		if err := validateRateLimit(&rateLimit); err != nil {
 			SendError(ctx, 400, fmt.Sprintf("Invalid rate limit: %s", err.Error()))
@@ -2652,6 +2708,8 @@ func (h *GovernanceHandler) createCustomer(ctx *fasthttp.RequestCtx) {
 				TokenResetDuration:   req.RateLimit.TokenResetDuration,
 				RequestMaxLimit:      req.RateLimit.RequestMaxLimit,
 				RequestResetDuration: req.RateLimit.RequestResetDuration,
+				InputTokenWeight:     req.RateLimit.InputTokenWeight,
+				OutputTokenWeight:    req.RateLimit.OutputTokenWeight,
 				TokenLastReset:       time.Now(),
 				RequestLastReset:     time.Now(),
 			}
@@ -2763,7 +2821,8 @@ func (h *GovernanceHandler) updateCustomer(ctx *fasthttp.RequestCtx) {
 		// Handle rate limit updates
 		if req.RateLimit != nil {
 			// Check if rate limit values are empty - means remove rate limit (reset durations don't matter)
-			rateLimitIsEmpty := req.RateLimit.TokenMaxLimit == nil && req.RateLimit.RequestMaxLimit == nil
+			rateLimitIsEmpty := req.RateLimit.TokenMaxLimit == nil && req.RateLimit.RequestMaxLimit == nil &&
+				req.RateLimit.InputTokenWeight == nil && req.RateLimit.OutputTokenWeight == nil
 			if rateLimitIsEmpty {
 				// Mark rate limit for deletion after FK is removed
 				if customer.RateLimitID != nil {
@@ -2777,10 +2836,29 @@ func (h *GovernanceHandler) updateCustomer(ctx *fasthttp.RequestCtx) {
 				if err := tx.First(&rateLimit, "id = ?", *customer.RateLimitID).Error; err != nil {
 					return err
 				}
-				rateLimit.TokenMaxLimit = req.RateLimit.TokenMaxLimit
-				rateLimit.TokenResetDuration = req.RateLimit.TokenResetDuration
-				rateLimit.RequestMaxLimit = req.RateLimit.RequestMaxLimit
-				rateLimit.RequestResetDuration = req.RateLimit.RequestResetDuration
+				// All six fields are independently settable on an update (a caller may resend
+				// only the field(s) it wants to change), so each must preserve the existing
+				// value when omitted from the request rather than being blindly nulled out -
+				// otherwise e.g. a weight-only update would silently wipe the token/request
+				// limits (or vice versa), disabling enforcement while the row stays "configured".
+				if req.RateLimit.TokenMaxLimit != nil {
+					rateLimit.TokenMaxLimit = req.RateLimit.TokenMaxLimit
+				}
+				if req.RateLimit.TokenResetDuration != nil {
+					rateLimit.TokenResetDuration = req.RateLimit.TokenResetDuration
+				}
+				if req.RateLimit.RequestMaxLimit != nil {
+					rateLimit.RequestMaxLimit = req.RateLimit.RequestMaxLimit
+				}
+				if req.RateLimit.RequestResetDuration != nil {
+					rateLimit.RequestResetDuration = req.RateLimit.RequestResetDuration
+				}
+				if req.RateLimit.InputTokenWeight != nil {
+					rateLimit.InputTokenWeight = req.RateLimit.InputTokenWeight
+				}
+				if req.RateLimit.OutputTokenWeight != nil {
+					rateLimit.OutputTokenWeight = req.RateLimit.OutputTokenWeight
+				}
 				if err := validateRateLimit(&rateLimit); err != nil {
 					return err
 				}
@@ -2796,6 +2874,8 @@ func (h *GovernanceHandler) updateCustomer(ctx *fasthttp.RequestCtx) {
 					TokenResetDuration:   req.RateLimit.TokenResetDuration,
 					RequestMaxLimit:      req.RateLimit.RequestMaxLimit,
 					RequestResetDuration: req.RateLimit.RequestResetDuration,
+					InputTokenWeight:     req.RateLimit.InputTokenWeight,
+					OutputTokenWeight:    req.RateLimit.OutputTokenWeight,
 					TokenLastReset:       time.Now(),
 					RequestLastReset:     time.Now(),
 				}
@@ -2964,6 +3044,16 @@ func validateRateLimit(rateLimit *configstoreTables.TableRateLimit) error {
 		if _, err := configstoreTables.ParseDuration(*rateLimit.RequestResetDuration); err != nil {
 			return fmt.Errorf("invalid rate limit request reset duration format: %s", *rateLimit.RequestResetDuration)
 		}
+	}
+	// Token cost weights must be strictly positive when set - no upper bound (ratio-only
+	// semantics). Mirrors framework/configstore/tables/ratelimit.go's BeforeSave so an
+	// invalid weight is rejected here with a clean 400 instead of surfacing later as a
+	// 500 from the DB-layer hook.
+	if rateLimit.InputTokenWeight != nil && *rateLimit.InputTokenWeight <= 0 {
+		return fmt.Errorf("rate limit input token weight cannot be zero or negative: %v", *rateLimit.InputTokenWeight)
+	}
+	if rateLimit.OutputTokenWeight != nil && *rateLimit.OutputTokenWeight <= 0 {
+		return fmt.Errorf("rate limit output token weight cannot be zero or negative: %v", *rateLimit.OutputTokenWeight)
 	}
 	return nil
 }
@@ -3308,6 +3398,8 @@ func (h *GovernanceHandler) createModelConfig(ctx *fasthttp.RequestCtx) {
 				TokenResetDuration:   req.RateLimit.TokenResetDuration,
 				RequestMaxLimit:      req.RateLimit.RequestMaxLimit,
 				RequestResetDuration: req.RateLimit.RequestResetDuration,
+				InputTokenWeight:     req.RateLimit.InputTokenWeight,
+				OutputTokenWeight:    req.RateLimit.OutputTokenWeight,
 				TokenLastReset:       time.Now(),
 				RequestLastReset:     time.Now(),
 			}
@@ -3401,7 +3493,8 @@ func (h *GovernanceHandler) updateModelConfig(ctx *fasthttp.RequestCtx) {
 		// Handle rate limit updates
 		if req.RateLimit != nil {
 			// Check if rate limit values are empty - means remove rate limit (reset durations don't matter)
-			rateLimitIsEmpty := req.RateLimit.TokenMaxLimit == nil && req.RateLimit.RequestMaxLimit == nil
+			rateLimitIsEmpty := req.RateLimit.TokenMaxLimit == nil && req.RateLimit.RequestMaxLimit == nil &&
+				req.RateLimit.InputTokenWeight == nil && req.RateLimit.OutputTokenWeight == nil
 			if rateLimitIsEmpty {
 				// Mark rate limit for deletion after FK is removed
 				if mc.RateLimitID != nil {
@@ -3410,16 +3503,34 @@ func (h *GovernanceHandler) updateModelConfig(ctx *fasthttp.RequestCtx) {
 					mc.RateLimit = nil
 				}
 			} else if mc.RateLimitID != nil {
-				// Update existing rate limit - set ALL fields from request (nil means clear)
+				// Update existing rate limit
 				rateLimit := configstoreTables.TableRateLimit{}
 				if err := tx.First(&rateLimit, "id = ?", *mc.RateLimitID).Error; err != nil {
 					return err
 				}
-				// Set all fields from request - nil values will clear the field
-				rateLimit.TokenMaxLimit = req.RateLimit.TokenMaxLimit
-				rateLimit.TokenResetDuration = req.RateLimit.TokenResetDuration
-				rateLimit.RequestMaxLimit = req.RateLimit.RequestMaxLimit
-				rateLimit.RequestResetDuration = req.RateLimit.RequestResetDuration
+				// All six fields are independently settable on an update (a caller may resend
+				// only the field(s) it wants to change), so each must preserve the existing
+				// value when omitted from the request rather than being blindly nulled out -
+				// otherwise e.g. a weight-only update would silently wipe the token/request
+				// limits (or vice versa), disabling enforcement while the row stays "configured".
+				if req.RateLimit.TokenMaxLimit != nil {
+					rateLimit.TokenMaxLimit = req.RateLimit.TokenMaxLimit
+				}
+				if req.RateLimit.TokenResetDuration != nil {
+					rateLimit.TokenResetDuration = req.RateLimit.TokenResetDuration
+				}
+				if req.RateLimit.RequestMaxLimit != nil {
+					rateLimit.RequestMaxLimit = req.RateLimit.RequestMaxLimit
+				}
+				if req.RateLimit.RequestResetDuration != nil {
+					rateLimit.RequestResetDuration = req.RateLimit.RequestResetDuration
+				}
+				if req.RateLimit.InputTokenWeight != nil {
+					rateLimit.InputTokenWeight = req.RateLimit.InputTokenWeight
+				}
+				if req.RateLimit.OutputTokenWeight != nil {
+					rateLimit.OutputTokenWeight = req.RateLimit.OutputTokenWeight
+				}
 				if err := validateRateLimit(&rateLimit); err != nil {
 					return err
 				}
@@ -3435,6 +3546,8 @@ func (h *GovernanceHandler) updateModelConfig(ctx *fasthttp.RequestCtx) {
 					TokenResetDuration:   req.RateLimit.TokenResetDuration,
 					RequestMaxLimit:      req.RateLimit.RequestMaxLimit,
 					RequestResetDuration: req.RateLimit.RequestResetDuration,
+					InputTokenWeight:     req.RateLimit.InputTokenWeight,
+					OutputTokenWeight:    req.RateLimit.OutputTokenWeight,
 					TokenLastReset:       time.Now(),
 					RequestLastReset:     time.Now(),
 				}
@@ -3665,10 +3778,29 @@ func (h *GovernanceHandler) updateProviderGovernance(ctx *fasthttp.RequestCtx) {
 				if err := tx.First(&rateLimit, "id = ?", *mc.RateLimitID).Error; err != nil {
 					return err
 				}
-				rateLimit.TokenMaxLimit = req.RateLimit.TokenMaxLimit
-				rateLimit.TokenResetDuration = req.RateLimit.TokenResetDuration
-				rateLimit.RequestMaxLimit = req.RateLimit.RequestMaxLimit
-				rateLimit.RequestResetDuration = req.RateLimit.RequestResetDuration
+				// All six fields are independently settable on an update (a caller may resend
+				// only the field(s) it wants to change), so each must preserve the existing
+				// value when omitted from the request rather than being blindly nulled out -
+				// otherwise e.g. a weight-only update would silently wipe the token/request
+				// limits (or vice versa), disabling enforcement while the row stays "configured".
+				if req.RateLimit.TokenMaxLimit != nil {
+					rateLimit.TokenMaxLimit = req.RateLimit.TokenMaxLimit
+				}
+				if req.RateLimit.TokenResetDuration != nil {
+					rateLimit.TokenResetDuration = req.RateLimit.TokenResetDuration
+				}
+				if req.RateLimit.RequestMaxLimit != nil {
+					rateLimit.RequestMaxLimit = req.RateLimit.RequestMaxLimit
+				}
+				if req.RateLimit.RequestResetDuration != nil {
+					rateLimit.RequestResetDuration = req.RateLimit.RequestResetDuration
+				}
+				if req.RateLimit.InputTokenWeight != nil {
+					rateLimit.InputTokenWeight = req.RateLimit.InputTokenWeight
+				}
+				if req.RateLimit.OutputTokenWeight != nil {
+					rateLimit.OutputTokenWeight = req.RateLimit.OutputTokenWeight
+				}
 				if err := validateRateLimit(&rateLimit); err != nil {
 					return err
 				}
@@ -3683,6 +3815,8 @@ func (h *GovernanceHandler) updateProviderGovernance(ctx *fasthttp.RequestCtx) {
 					TokenResetDuration:   req.RateLimit.TokenResetDuration,
 					RequestMaxLimit:      req.RateLimit.RequestMaxLimit,
 					RequestResetDuration: req.RateLimit.RequestResetDuration,
+					InputTokenWeight:     req.RateLimit.InputTokenWeight,
+					OutputTokenWeight:    req.RateLimit.OutputTokenWeight,
 					TokenLastReset:       time.Now(),
 					RequestLastReset:     time.Now(),
 				}

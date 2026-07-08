@@ -536,6 +536,16 @@
                 "format": "date-time",
                 "description": "Last time request counter was reset"
               },
+              "input_token_weight": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Optional cost weight applied to prompt tokens before summing into token_current_usage. Omit for 1.0 (flat total-token accounting). Only the ratio between input_token_weight and output_token_weight matters; no upper bound."
+              },
+              "output_token_weight": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Optional cost weight applied to completion tokens before summing into token_current_usage. Omit for 1.0 (flat total-token accounting). Only the ratio between input_token_weight and output_token_weight matters; no upper bound."
+              },
               "calendar_aligned": {
                 "type": "boolean",
                 "description": "Deprecated: set calendar_aligned on the owner (team / virtual key / access profile) instead. Kept for backward compatibility with older config.json files; ignored unless a reconciler promotes it to its owner.",
@@ -5266,6 +5276,16 @@
         "request_reset_duration": {
           "type": "string",
           "description": "Request reset window, e.g. \"1M\", \"1h\""
+        },
+        "input_token_weight": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Optional cost weight applied to prompt tokens before summing into token_current_usage. Omit for 1.0 (flat total-token accounting). Only the ratio between input_token_weight and output_token_weight matters; no upper bound."
+        },
+        "output_token_weight": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Optional cost weight applied to completion tokens before summing into token_current_usage. Omit for 1.0 (flat total-token accounting). Only the ratio between input_token_weight and output_token_weight matters; no upper bound."
         },
         "calendar_aligned": {
           "type": "boolean",

@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ModelMultiselect } from "@/components/ui/modelMultiselect";
 import NumberAndSelect from "@/components/ui/numberAndSelect";
@@ -55,6 +56,9 @@ const formSchema = z
 		tokenResetDuration: z.string().optional(),
 		requestMaxLimit: z.number().int().nonnegative().optional(),
 		requestResetDuration: z.string().optional(),
+		// Optional weighted token accounting; omitted defaults to 1.0. Must be > 0, no upper bound.
+		inputTokenWeight: z.number().positive().optional(),
+		outputTokenWeight: z.number().positive().optional(),
 	})
 	.refine((data) => data.scope !== "virtual_key" || !!data.scopeId, {
 		message: "Virtual key is required for the Virtual Key scope",
@@ -124,6 +128,8 @@ export default function ModelLimitSheet({ modelConfig, onSave, onCancel }: Model
 			tokenResetDuration: modelConfig?.rate_limit?.token_reset_duration || "1h",
 			requestMaxLimit: modelConfig?.rate_limit?.request_max_limit ?? undefined,
 			requestResetDuration: modelConfig?.rate_limit?.request_reset_duration || "1h",
+			inputTokenWeight: modelConfig?.rate_limit?.input_token_weight ?? undefined,
+			outputTokenWeight: modelConfig?.rate_limit?.output_token_weight ?? undefined,
 		},
 	});
 
@@ -157,6 +163,8 @@ export default function ModelLimitSheet({ modelConfig, onSave, onCancel }: Model
 				tokenResetDuration: modelConfig.rate_limit?.token_reset_duration || "1h",
 				requestMaxLimit: modelConfig.rate_limit?.request_max_limit ?? undefined,
 				requestResetDuration: modelConfig.rate_limit?.request_reset_duration || "1h",
+				inputTokenWeight: modelConfig.rate_limit?.input_token_weight ?? undefined,
+				outputTokenWeight: modelConfig.rate_limit?.output_token_weight ?? undefined,
 			});
 		}
 	}, [modelConfig, form]);
@@ -193,6 +201,8 @@ export default function ModelLimitSheet({ modelConfig, onSave, onCancel }: Model
 							token_reset_duration?: string | null;
 							request_max_limit?: number | null;
 							request_reset_duration?: string | null;
+							input_token_weight?: number | null;
+							output_token_weight?: number | null;
 					  }
 					| undefined;
 				if (hasRateLimit) {
@@ -202,6 +212,8 @@ export default function ModelLimitSheet({ modelConfig, onSave, onCancel }: Model
 						request_max_limit: data.requestMaxLimit ?? null,
 						request_reset_duration:
 							data.requestMaxLimit !== undefined && data.requestMaxLimit !== null ? data.requestResetDuration || "1h" : null,
+						input_token_weight: data.inputTokenWeight ?? null,
+						output_token_weight: data.outputTokenWeight ?? null,
 					};
 				} else if (hadRateLimit) {
 					rateLimitPayload = {};
@@ -238,6 +250,8 @@ export default function ModelLimitSheet({ modelConfig, onSave, onCancel }: Model
 									request_max_limit: data.requestMaxLimit,
 									request_reset_duration:
 										data.requestMaxLimit !== undefined && data.requestMaxLimit !== null ? data.requestResetDuration || "1h" : undefined,
+									input_token_weight: data.inputTokenWeight,
+									output_token_weight: data.outputTokenWeight,
 								}
 							: undefined,
 				}).unwrap();
@@ -458,9 +472,56 @@ export default function ModelLimitSheet({ modelConfig, onSave, onCancel }: Model
 												options={resetDurationOptions}
 											/>
 											<FormMessage />
-										</FormItem>
+									</FormItem>
 									)}
 								/>
+
+								{form.watch("tokenMaxLimit") !== undefined && (
+									<div className="grid grid-cols-2 gap-3">
+										<FormField
+											control={form.control}
+											name="inputTokenWeight"
+											render={({ field }) => (
+												<FormItem>
+													<Label htmlFor="modelInputTokenWeight" className="text-sm font-normal">
+														Input Token Weight
+													</Label>
+													<Input
+														id="modelInputTokenWeight"
+														type="number"
+														min="0"
+														step="0.1"
+														placeholder="1.0"
+														value={field.value ?? ""}
+														onChange={(e) => field.onChange(e.target.value === "" ? undefined : Number(e.target.value))}
+													/>
+													<FormMessage />
+												</FormItem>
+											)}
+										/>
+										<FormField
+											control={form.control}
+											name="outputTokenWeight"
+											render={({ field }) => (
+												<FormItem>
+													<Label htmlFor="modelOutputTokenWeight" className="text-sm font-normal">
+														Output Token Weight
+													</Label>
+													<Input
+														id="modelOutputTokenWeight"
+														type="number"
+														min="0"
+														step="0.1"
+														placeholder="1.0"
+														value={field.value ?? ""}
+														onChange={(e) => field.onChange(e.target.value === "" ? undefined : Number(e.target.value))}
+													/>
+													<FormMessage />
+												</FormItem>
+											)}
+										/>
+									</div>
+								)}
 
 								<FormField
 									control={form.control}

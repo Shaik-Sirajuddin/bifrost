@@ -126,7 +126,26 @@ Rate limits protect your system from abuse and manage traffic by setting thresho
 
 Bifrost supports two types of rate limits that work in parallel:
 - **Request Limits**: Control the maximum number of API calls that can be made within a set duration (e.g., 100 requests per minute).
-- **Token Limits**: Control the maximum number of tokens (prompt + completion) that can be processed within a set duration (e.g., 50,000 tokens per hour).
+- **Token Limits**: Control the maximum number of tokens (prompt + completion) that can be processed within a set duration (e.g., 50,000 tokens per hour). By default, prompt and completion tokens count equally toward this limit.
+
+### Weighted Token Accounting
+
+Input and output tokens can have very different cost/latency characteristics, so a flat token count is sometimes too coarse. Every rate limit optionally accepts `input_token_weight` and `output_token_weight` to weight prompt vs. completion tokens independently:
+
+```
+consumed_quota = prompt_tokens * input_token_weight + completion_tokens * output_token_weight
+```
+
+```json
+{
+  "token_max_limit": 90000,
+  "token_reset_duration": "1m",
+  "input_token_weight": 0.2,
+  "output_token_weight": 1.0
+}
+```
+
+In this example, output tokens count 5x as much as input tokens toward the 90,000/minute limit. Both weights are optional and independent — omitting either (or both) defaults it to `1.0`, which reproduces today's flat total-token behavior exactly. Weights must be greater than `0`; there is no upper bound, since only the **ratio** between the two weights matters (`{0.2, 1.0}` and `{1.0, 5.0}` are equivalent).
 
 ### Rate Limit Hierarchy
 
@@ -406,6 +425,8 @@ curl -X PUT "https://your-bifrost-instance.com/api/governance/virtual-keys/{vk_i
 | `budget.calendar_aligned` | boolean | When true, resets at calendar boundaries in UTC (requires `d`/`w`/`M`/`Y` durations) |
 | `rate_limit.token_max_limit` | integer | Maximum tokens per period |
 | `rate_limit.request_max_limit` | integer | Maximum requests per period |
+| `rate_limit.input_token_weight` | float | Optional cost weight for prompt tokens (default `1.0`; must be `> 0`, no upper bound) |
+| `rate_limit.output_token_weight` | float | Optional cost weight for completion tokens (default `1.0`; must be `> 0`, no upper bound) |
 
 </Tab>
 <Tab title="config.json">

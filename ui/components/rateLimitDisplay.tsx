@@ -11,6 +11,14 @@ interface RateLimitShape {
 	request_max_limit?: number | null;
 	request_reset_duration?: string | null;
 	request_current_usage?: number | null;
+	input_token_weight?: number | null;
+	output_token_weight?: number | null;
+}
+
+/** Renders a compact "in Nx / out Nx" suffix when either token weight is set (non-default). */
+function tokenWeightSuffix(inputWeight?: number | null, outputWeight?: number | null) {
+	if (inputWeight == null && outputWeight == null) return null;
+	return `in ${inputWeight ?? 1}x / out ${outputWeight ?? 1}x`;
 }
 
 interface RateLimitDisplayProps {
@@ -35,16 +43,19 @@ function LimitText({
 	max,
 	resetDuration,
 	calendarAligned,
+	weightSuffix,
 }: {
 	label: string;
 	max: number;
 	resetDuration?: string | null;
 	calendarAligned?: boolean;
+	weightSuffix?: string | null;
 }) {
 	return (
 		<div className="flex items-center justify-between gap-4 text-xs">
 			<span className="font-mono">
 				{formatCompactNumber(max)} {label}
+				{weightSuffix ? <span className="text-muted-foreground ml-1">({weightSuffix})</span> : null}
 			</span>
 			<span className="text-muted-foreground">{formatResetDuration(resetDuration, calendarAligned)}</span>
 		</div>
@@ -58,6 +69,7 @@ function Bar({
 	resetDuration,
 	compact,
 	calendarAligned,
+	weightSuffix,
 }: {
 	label: string;
 	current: number;
@@ -65,6 +77,7 @@ function Bar({
 	resetDuration?: string | null;
 	compact?: boolean;
 	calendarAligned?: boolean;
+	weightSuffix?: string | null;
 }) {
 	const pct = max > 0 ? Math.min((current / max) * 100, 100) : 0;
 	const isExhausted = max > 0 && current >= max;
@@ -77,6 +90,7 @@ function Bar({
 					<div className="flex items-center justify-between gap-4 text-xs">
 						<span className="font-medium">
 							{formatCompactNumber(max)} {label}
+							{weightSuffix ? <span className="text-muted-foreground ml-1">({weightSuffix})</span> : null}
 						</span>
 						<span className="text-muted-foreground">{formatResetDuration(resetDuration, calendarAligned)}</span>
 					</div>
@@ -87,6 +101,7 @@ function Bar({
 				<p className="font-medium">
 					{current.toLocaleString()} / {max.toLocaleString()} {label}
 				</p>
+				{weightSuffix ? <p className="text-primary-foreground/80 text-xs">Weighted: {weightSuffix}</p> : null}
 				{resetDuration ? (
 					<p className="text-primary-foreground/80 text-xs">Resets {formatResetDuration(resetDuration, calendarAligned)}</p>
 				) : null}
@@ -102,6 +117,7 @@ export function RateLimitDisplay({ rateLimits, compact, limitOnly, calendarAlign
 
 	const hasTokens = rateLimits.token_max_limit != null && rateLimits.token_max_limit > 0;
 	const hasRequests = rateLimits.request_max_limit != null && rateLimits.request_max_limit > 0;
+	const tokenWeightLabel = tokenWeightSuffix(rateLimits.input_token_weight, rateLimits.output_token_weight);
 
 	if (!hasTokens && !hasRequests) {
 		return <span className="text-muted-foreground text-sm">-</span>;
@@ -116,6 +132,7 @@ export function RateLimitDisplay({ rateLimits, compact, limitOnly, calendarAlign
 						max={rateLimits.token_max_limit!}
 						resetDuration={rateLimits.token_reset_duration}
 						calendarAligned={calendarAligned}
+						weightSuffix={tokenWeightLabel}
 					/>
 				) : (
 					<Bar
@@ -125,6 +142,7 @@ export function RateLimitDisplay({ rateLimits, compact, limitOnly, calendarAlign
 						resetDuration={rateLimits.token_reset_duration}
 						compact={compact}
 						calendarAligned={calendarAligned}
+						weightSuffix={tokenWeightLabel}
 					/>
 				)
 			) : null}

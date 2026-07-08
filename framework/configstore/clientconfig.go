@@ -1049,6 +1049,24 @@ func GenerateRateLimitHash(rl tables.TableRateLimit) (string, error) {
 		hash.Write([]byte(*rl.RequestResetDuration))
 	}
 
+	// Hash InputTokenWeight
+	if rl.InputTokenWeight != nil {
+		data, err := sonic.Marshal(*rl.InputTokenWeight)
+		if err != nil {
+			return "", err
+		}
+		hash.Write(data)
+	}
+
+	// Hash OutputTokenWeight
+	if rl.OutputTokenWeight != nil {
+		data, err := sonic.Marshal(*rl.OutputTokenWeight)
+		if err != nil {
+			return "", err
+		}
+		hash.Write(data)
+	}
+
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 

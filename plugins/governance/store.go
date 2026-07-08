@@ -4,6 +4,7 @@ package governance
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -139,11 +140,11 @@ type GovernanceStore interface {
 	CheckVirtualKeyRateLimit(ctx context.Context, vk *configstoreTables.TableVirtualKey, request *EvaluationRequest, tokensBaselines map[string]int64, requestsBaselines map[string]int64) (Decision, error)
 	// In-memory usage updates (for VK-level)
 	UpdateVirtualKeyBudgetUsageInMemory(ctx context.Context, vk *configstoreTables.TableVirtualKey, provider schemas.ModelProvider, cost float64) error
-	UpdateVirtualKeyRateLimitUsageInMemory(ctx context.Context, vk *configstoreTables.TableVirtualKey, provider schemas.ModelProvider, tokensUsed int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error
+	UpdateVirtualKeyRateLimitUsageInMemory(ctx context.Context, vk *configstoreTables.TableVirtualKey, provider schemas.ModelProvider, promptTokens, completionTokens int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error
 	// In-memory usage updates for scoped model configs (mirror the global model updates).
 	// scope/scopeID identify the owning entity; an empty scope or scopeID is a no-op.
 	UpdateScopedModelBudgetUsageInMemory(ctx context.Context, scope, scopeID, model string, provider schemas.ModelProvider, cost float64) error
-	UpdateScopedModelRateLimitUsageInMemory(ctx context.Context, scope, scopeID, model string, provider schemas.ModelProvider, tokensUsed int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error
+	UpdateScopedModelRateLimitUsageInMemory(ctx context.Context, scope, scopeID, model string, provider schemas.ModelProvider, promptTokens, completionTokens int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error
 	// In-memory reset checks (return items that need DB sync)
 	ResetExpiredRateLimitsInMemory(ctx context.Context, refreshReferences bool, rateLimitIDs ...string) []*configstoreTables.TableRateLimit
 	ResetExpiredBudgetsInMemory(ctx context.Context, refreshReferences bool, budgetIDs ...string) []*configstoreTables.TableBudget
@@ -152,7 +153,7 @@ type GovernanceStore interface {
 	ResetExpiredBudgets(ctx context.Context, resetBudgets []*configstoreTables.TableBudget) error
 	// Provider and model-level usage updates (combined)
 	UpdateProviderAndModelBudgetUsageInMemory(ctx context.Context, model string, provider schemas.ModelProvider, cost float64) error
-	UpdateProviderAndModelRateLimitUsageInMemory(ctx context.Context, model string, provider schemas.ModelProvider, tokensUsed int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error
+	UpdateProviderAndModelRateLimitUsageInMemory(ctx context.Context, model string, provider schemas.ModelProvider, promptTokens, completionTokens int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error
 	// Dump operations
 	DumpRateLimits(ctx context.Context, tokenBaselines map[string]int64, requestBaselines map[string]int64) error
 	DumpBudgets(ctx context.Context, baselines map[string]float64) error
@@ -187,7 +188,7 @@ type GovernanceStore interface {
 	CheckUserBudget(ctx context.Context, userID string, request *EvaluationRequest, baselines map[string]float64) (Decision, error)
 	CheckUserRateLimit(ctx context.Context, userID string, request *EvaluationRequest, tokensBaselines map[string]int64, requestsBaselines map[string]int64) (Decision, error)
 	UpdateUserBudgetUsageInMemory(ctx context.Context, userID string, cost float64) error
-	UpdateUserRateLimitUsageInMemory(ctx context.Context, userID string, tokensUsed int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error
+	UpdateUserRateLimitUsageInMemory(ctx context.Context, userID string, promptTokens, completionTokens int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error
 	// Model config in-memory operations
 	UpdateModelConfigInMemory(ctx context.Context, mc *configstoreTables.TableModelConfig) *configstoreTables.TableModelConfig
 	DeleteModelConfigInMemory(ctx context.Context, mcID string)
@@ -440,7 +441,41 @@ func (gs *LocalGovernanceStore) BumpBudgetUsage(ctx context.Context, budgetID st
 // TokenResetDuration / RequestResetDuration has elapsed. Same CAS-retry
 // contract as BumpBudgetUsage — no increment is ever dropped under
 // concurrent callers. No-op when the rate limit is absent.
-func (gs *LocalGovernanceStore) BumpRateLimitUsage(ctx context.Context, rateLimitID string, tokensUsed int64, shouldUpdateTokens, shouldUpdateRequests bool) error {
+// weightedTokenUsage applies a rate limit's own optional input/output token
+// cost weights to a raw prompt/completion token pair, rounding to the nearest
+// integer for storage in the int64 TokenCurrentUsage counter. A nil weight
+// defaults to 1.0, so an unconfigured rate limit reduces to the historical
+// flat total-token sum (promptTokens + completionTokens).
+func weightedTokenUsage(rl *configstoreTables.TableRateLimit, promptTokens, completionTokens int64) int64 {
+	inputWeight := 1.0
+	if rl.InputTokenWeight != nil {
+		inputWeight = *rl.InputTokenWeight
+	}
+	outputWeight := 1.0
+	if rl.OutputTokenWeight != nil {
+		outputWeight = *rl.OutputTokenWeight
+	}
+	weighted := math.Round(float64(promptTokens)*inputWeight + float64(completionTokens)*outputWeight)
+	// Weights are unbounded (issue #3834: ratio-only semantics, no upper bound), so a large
+	// configured weight combined with a large token count can overflow int64. Converting an
+	// out-of-range float64 to int64 is implementation-defined in Go (not a panic) and could
+	// silently corrupt TokenCurrentUsage with a garbage/negative value, effectively bypassing
+	// the rate limit. Clamp to the int64 range before converting.
+	switch {
+	case weighted > math.MaxInt64:
+		return math.MaxInt64
+	case weighted < math.MinInt64:
+		return math.MinInt64
+	default:
+		return int64(weighted)
+	}
+}
+
+// BumpRateLimitUsage atomically adds a request's weighted token usage to the
+// rate limit identified by rateLimitID, computed from the raw
+// promptTokens/completionTokens using that rate limit's own (possibly
+// unconfigured) InputTokenWeight/OutputTokenWeight.
+func (gs *LocalGovernanceStore) BumpRateLimitUsage(ctx context.Context, rateLimitID string, promptTokens, completionTokens int64, shouldUpdateTokens, shouldUpdateRequests bool) error {
 	for {
 		raw, exists := gs.rateLimits.Load(rateLimitID)
 		if !exists || raw == nil {
@@ -456,7 +491,7 @@ func (gs *LocalGovernanceStore) BumpRateLimitUsage(ctx context.Context, rateLimi
 		}
 		clone := *old
 		if shouldUpdateTokens {
-			clone.TokenCurrentUsage += tokensUsed
+			clone.TokenCurrentUsage += weightedTokenUsage(old, promptTokens, completionTokens)
 		}
 		if shouldUpdateRequests {
 			clone.RequestCurrentUsage++
@@ -1683,13 +1718,13 @@ func (gs *LocalGovernanceStore) UpdateUserBudgetUsageInMemory(ctx context.Contex
 }
 
 // UpdateProviderAndModelRateLimitUsageInMemory updates rate limit counters for both provider-level and model-level rate limits.
-func (gs *LocalGovernanceStore) UpdateProviderAndModelRateLimitUsageInMemory(ctx context.Context, model string, provider schemas.ModelProvider, tokensUsed int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error {
+func (gs *LocalGovernanceStore) UpdateProviderAndModelRateLimitUsageInMemory(ctx context.Context, model string, provider schemas.ModelProvider, promptTokens, completionTokens int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error {
 	// 1. Update provider-level rate limit (if provider is set)
 	if provider != "" {
 		providerKey := string(provider)
 		if value, exists := gs.providers.Load(providerKey); exists && value != nil {
 			if providerTable, ok := value.(*configstoreTables.TableProvider); ok && providerTable != nil && providerTable.RateLimitID != nil {
-				if err := gs.BumpRateLimitUsage(ctx, *providerTable.RateLimitID, tokensUsed, shouldUpdateTokens, shouldUpdateRequests); err != nil {
+				if err := gs.BumpRateLimitUsage(ctx, *providerTable.RateLimitID, promptTokens, completionTokens, shouldUpdateTokens, shouldUpdateRequests); err != nil {
 					return err
 				}
 			}
@@ -1707,7 +1742,7 @@ func (gs *LocalGovernanceStore) UpdateProviderAndModelRateLimitUsageInMemory(ctx
 		if mc.RateLimitID == nil {
 			continue
 		}
-		if err := gs.BumpRateLimitUsage(ctx, *mc.RateLimitID, tokensUsed, shouldUpdateTokens, shouldUpdateRequests); err != nil {
+		if err := gs.BumpRateLimitUsage(ctx, *mc.RateLimitID, promptTokens, completionTokens, shouldUpdateTokens, shouldUpdateRequests); err != nil {
 			return err
 		}
 	}
@@ -1739,7 +1774,7 @@ func (gs *LocalGovernanceStore) UpdateScopedModelBudgetUsageInMemory(ctx context
 
 // UpdateScopedModelRateLimitUsageInMemory bumps rate limit counters for model configs scoped
 // to the given (scope, scopeID). Post-response counterpart to CheckScopedModelRateLimit.
-func (gs *LocalGovernanceStore) UpdateScopedModelRateLimitUsageInMemory(ctx context.Context, scope, scopeID, model string, provider schemas.ModelProvider, tokensUsed int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error {
+func (gs *LocalGovernanceStore) UpdateScopedModelRateLimitUsageInMemory(ctx context.Context, scope, scopeID, model string, provider schemas.ModelProvider, promptTokens, completionTokens int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error {
 	if scope == "" || scopeID == "" {
 		return nil
 	}
@@ -1752,7 +1787,7 @@ func (gs *LocalGovernanceStore) UpdateScopedModelRateLimitUsageInMemory(ctx cont
 		if mc.RateLimitID == nil {
 			continue
 		}
-		if err := gs.BumpRateLimitUsage(ctx, *mc.RateLimitID, tokensUsed, shouldUpdateTokens, shouldUpdateRequests); err != nil {
+		if err := gs.BumpRateLimitUsage(ctx, *mc.RateLimitID, promptTokens, completionTokens, shouldUpdateTokens, shouldUpdateRequests); err != nil {
 			return err
 		}
 	}
@@ -1760,14 +1795,14 @@ func (gs *LocalGovernanceStore) UpdateScopedModelRateLimitUsageInMemory(ctx cont
 }
 
 // UpdateVirtualKeyRateLimitUsageInMemory updates rate limit counters for VK-level rate limits.
-func (gs *LocalGovernanceStore) UpdateVirtualKeyRateLimitUsageInMemory(ctx context.Context, vk *configstoreTables.TableVirtualKey, provider schemas.ModelProvider, tokensUsed int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error {
+func (gs *LocalGovernanceStore) UpdateVirtualKeyRateLimitUsageInMemory(ctx context.Context, vk *configstoreTables.TableVirtualKey, provider schemas.ModelProvider, promptTokens, completionTokens int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error {
 	if vk == nil {
 		return fmt.Errorf("virtual key cannot be nil")
 	}
 	// Collect rate limit IDs using fast in-memory lookup instead of DB queries
 	rateLimitIDs := gs.collectRateLimitIDsFromMemory(ctx, vk, provider)
 	for _, rateLimitID := range rateLimitIDs {
-		if err := gs.BumpRateLimitUsage(ctx, rateLimitID, tokensUsed, shouldUpdateTokens, shouldUpdateRequests); err != nil {
+		if err := gs.BumpRateLimitUsage(ctx, rateLimitID, promptTokens, completionTokens, shouldUpdateTokens, shouldUpdateRequests); err != nil {
 			return err
 		}
 	}
@@ -1776,7 +1811,7 @@ func (gs *LocalGovernanceStore) UpdateVirtualKeyRateLimitUsageInMemory(ctx conte
 
 // UpdateUserRateLimitUsageInMemory updates user's rate limit usage in memory (enterprise-only)
 // Community build: silent no-op to avoid per-request error spam when a userID is set.
-func (gs *LocalGovernanceStore) UpdateUserRateLimitUsageInMemory(ctx context.Context, userID string, tokensUsed int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error {
+func (gs *LocalGovernanceStore) UpdateUserRateLimitUsageInMemory(ctx context.Context, userID string, promptTokens, completionTokens int64, shouldUpdateTokens bool, shouldUpdateRequests bool) error {
 	return nil
 }
 

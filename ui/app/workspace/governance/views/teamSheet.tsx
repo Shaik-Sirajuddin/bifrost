@@ -57,6 +57,9 @@ interface TeamFormData {
 	tokenResetDuration: string;
 	requestMaxLimit: number | undefined;
 	requestResetDuration: string;
+	// Optional weighted token accounting; undefined defaults to 1.0. Must be > 0, no upper bound.
+	inputTokenWeight: number | undefined;
+	outputTokenWeight: number | undefined;
 	// Team-wide: applies to all team budgets and the team rate limit
 	calendarAligned: boolean;
 	isDirty: boolean;
@@ -78,6 +81,8 @@ const createInitialState = (team?: Team | null): Omit<TeamFormData, "isDirty"> =
 		tokenResetDuration: team?.rate_limit?.token_reset_duration || "1h",
 		requestMaxLimit: team?.rate_limit?.request_max_limit ?? undefined,
 		requestResetDuration: team?.rate_limit?.request_reset_duration || "1h",
+		inputTokenWeight: team?.rate_limit?.input_token_weight ?? undefined,
+		outputTokenWeight: team?.rate_limit?.output_token_weight ?? undefined,
 		calendarAligned: team?.calendar_aligned ?? false,
 	};
 };
@@ -161,6 +166,8 @@ export default function TeamSheet({ team, customers, onSave, onCancel }: TeamShe
 			tokenResetDuration: formData.tokenResetDuration,
 			requestMaxLimit: formData.requestMaxLimit,
 			requestResetDuration: formData.requestResetDuration,
+			inputTokenWeight: formData.inputTokenWeight,
+			outputTokenWeight: formData.outputTokenWeight,
 			calendarAligned: formData.calendarAligned,
 		};
 		setFormData((prev) => ({
@@ -175,6 +182,8 @@ export default function TeamSheet({ team, customers, onSave, onCancel }: TeamShe
 		formData.tokenResetDuration,
 		formData.requestMaxLimit,
 		formData.requestResetDuration,
+		formData.inputTokenWeight,
+		formData.outputTokenWeight,
 		formData.calendarAligned,
 		initialState,
 	]);
@@ -267,6 +276,8 @@ export default function TeamSheet({ team, customers, onSave, onCancel }: TeamShe
 						request_max_limit: requestMaxLimitNum,
 						request_reset_duration:
 							requestMaxLimitNum !== undefined && requestMaxLimitNum !== null ? formData.requestResetDuration : undefined,
+						input_token_weight: formData.inputTokenWeight,
+						output_token_weight: formData.outputTokenWeight,
 					};
 				} else if (hadRateLimit) {
 					updateData.rate_limit = {} as UpdateTeamRequest["rate_limit"];
@@ -295,6 +306,8 @@ export default function TeamSheet({ team, customers, onSave, onCancel }: TeamShe
 						request_max_limit: requestMaxLimitNum,
 						request_reset_duration:
 							requestMaxLimitNum !== undefined && requestMaxLimitNum !== null ? formData.requestResetDuration : undefined,
+						input_token_weight: formData.inputTokenWeight,
+						output_token_weight: formData.outputTokenWeight,
 					};
 				}
 
@@ -425,6 +438,39 @@ export default function TeamSheet({ team, customers, onSave, onCancel }: TeamShe
 							onChangeSelect={(value) => updateField("tokenResetDuration", value)}
 							options={resetDurationOptions}
 						/>
+
+						{formData.tokenMaxLimit !== undefined && (
+							<div className="grid grid-cols-2 gap-3">
+								<div>
+									<Label htmlFor="inputTokenWeight" className="text-sm font-normal">
+										Input Token Weight
+									</Label>
+									<Input
+										id="inputTokenWeight"
+										type="number"
+										min="0"
+										step="0.1"
+										placeholder="1.0"
+										value={formData.inputTokenWeight ?? ""}
+										onChange={(e) => updateField("inputTokenWeight", e.target.value === "" ? undefined : Number(e.target.value))}
+									/>
+								</div>
+								<div>
+									<Label htmlFor="outputTokenWeight" className="text-sm font-normal">
+										Output Token Weight
+									</Label>
+									<Input
+										id="outputTokenWeight"
+										type="number"
+										min="0"
+										step="0.1"
+										placeholder="1.0"
+										value={formData.outputTokenWeight ?? ""}
+										onChange={(e) => updateField("outputTokenWeight", e.target.value === "" ? undefined : Number(e.target.value))}
+									/>
+								</div>
+							</div>
+						)}
 
 						{/* Rate Limit Configuration - Request Limits */}
 						<NumberAndSelect

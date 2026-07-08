@@ -23,6 +23,14 @@ type TableRateLimit struct {
 	RequestCurrentUsage  int64     `gorm:"default:0" json:"request_current_usage"`                   // Current request usage
 	RequestLastReset     time.Time `gorm:"index" json:"request_last_reset"`                          // Last time request counter was reset
 
+	// Optional weighted token accounting for TokenMaxLimit/TokenCurrentUsage.
+	// consumed = prompt_tokens*InputTokenWeight + completion_tokens*OutputTokenWeight.
+	// nil on either field defaults to 1.0 at consumption time, i.e. identical to
+	// today's flat total-token accounting. Only the ratio between the two weights
+	// matters - values are not restricted to 0-1 and have no upper bound.
+	InputTokenWeight  *float64 `gorm:"default:null" json:"input_token_weight,omitempty"`
+	OutputTokenWeight *float64 `gorm:"default:null" json:"output_token_weight,omitempty"`
+
 	// Deprecated: set calendar_aligned on the parent access profile / VK / team
 	// instead. Kept for backward compatibility with older config.json files;
 	// the OSS applyV1Compat path and the enterprise access-profile reconciler
@@ -81,6 +89,16 @@ func (rl *TableRateLimit) BeforeSave(tx *gorm.DB) error {
 	// Making sure request limit is greater than zero
 	if rl.RequestMaxLimit != nil && *rl.RequestMaxLimit <= 0 {
 		return fmt.Errorf("request_max_limit cannot be zero or negative: %d", *rl.RequestMaxLimit)
+	}
+
+	// Token cost weights must be strictly positive when set. No upper bound -
+	// only the ratio between input and output weight matters.
+	if rl.InputTokenWeight != nil && *rl.InputTokenWeight <= 0 {
+		return fmt.Errorf("input_token_weight cannot be zero or negative: %v", *rl.InputTokenWeight)
+	}
+
+	if rl.OutputTokenWeight != nil && *rl.OutputTokenWeight <= 0 {
+		return fmt.Errorf("output_token_weight cannot be zero or negative: %v", *rl.OutputTokenWeight)
 	}
 
 	return nil

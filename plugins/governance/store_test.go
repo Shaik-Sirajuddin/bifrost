@@ -685,7 +685,7 @@ func TestGovernanceStore_UpdateRateLimitUsage_TokensAndRequests(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test updating tokens
-	err = store.UpdateVirtualKeyRateLimitUsageInMemory(context.Background(), vk, schemas.OpenAI, 500, true, false)
+	err = store.UpdateVirtualKeyRateLimitUsageInMemory(context.Background(), vk, schemas.OpenAI, 500, 0, true, false)
 	assert.NoError(t, err, "Rate limit update should succeed")
 
 	// Retrieve the updated rate limit from the main RateLimits map
@@ -698,7 +698,7 @@ func TestGovernanceStore_UpdateRateLimitUsage_TokensAndRequests(t *testing.T) {
 	assert.Equal(t, int64(0), updatedRateLimit.RequestCurrentUsage, "Request usage should not change")
 
 	// Test updating requests
-	err = store.UpdateVirtualKeyRateLimitUsageInMemory(context.Background(), vk, schemas.OpenAI, 0, false, true)
+	err = store.UpdateVirtualKeyRateLimitUsageInMemory(context.Background(), vk, schemas.OpenAI, 0, 0, false, true)
 	assert.NoError(t, err, "Rate limit update should succeed")
 
 	// Retrieve the updated rate limit again

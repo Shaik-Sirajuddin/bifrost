@@ -39,6 +39,9 @@ interface CustomerFormData {
 	tokenResetDuration: string;
 	requestMaxLimit: number | undefined;
 	requestResetDuration: string;
+	// Optional weighted token accounting; undefined defaults to 1.0. Must be > 0, no upper bound.
+	inputTokenWeight: number | undefined;
+	outputTokenWeight: number | undefined;
 	calendarAligned: boolean;
 	isDirty: boolean;
 }
@@ -55,6 +58,8 @@ const createInitialState = (customer?: Customer | null): Omit<CustomerFormData, 
 		tokenResetDuration: customer?.rate_limit?.token_reset_duration || "1h",
 		requestMaxLimit: customer?.rate_limit?.request_max_limit ?? undefined,
 		requestResetDuration: customer?.rate_limit?.request_reset_duration || "1h",
+		inputTokenWeight: customer?.rate_limit?.input_token_weight ?? undefined,
+		outputTokenWeight: customer?.rate_limit?.output_token_weight ?? undefined,
 		calendarAligned: customer?.calendar_aligned ?? false,
 	};
 };
@@ -103,6 +108,8 @@ export default function CustomerSheet({ open, onOpenChange, customer, onSuccess 
 			tokenResetDuration: formData.tokenResetDuration,
 			requestMaxLimit: formData.requestMaxLimit,
 			requestResetDuration: formData.requestResetDuration,
+			inputTokenWeight: formData.inputTokenWeight,
+			outputTokenWeight: formData.outputTokenWeight,
 			calendarAligned: formData.calendarAligned,
 		};
 		setFormData((prev) => ({
@@ -116,6 +123,8 @@ export default function CustomerSheet({ open, onOpenChange, customer, onSuccess 
 		formData.tokenResetDuration,
 		formData.requestMaxLimit,
 		formData.requestResetDuration,
+		formData.inputTokenWeight,
+		formData.outputTokenWeight,
 		formData.calendarAligned,
 		initialState,
 	]);
@@ -218,6 +227,8 @@ export default function CustomerSheet({ open, onOpenChange, customer, onSuccess 
 						request_max_limit: requestMaxLimitNum,
 						request_reset_duration:
 							requestMaxLimitNum !== undefined && requestMaxLimitNum !== null ? formData.requestResetDuration : undefined,
+						input_token_weight: formData.inputTokenWeight,
+						output_token_weight: formData.outputTokenWeight,
 					};
 				} else if (hadRateLimit) {
 					updateData.rate_limit = {} as UpdateCustomerRequest["rate_limit"];
@@ -242,6 +253,8 @@ export default function CustomerSheet({ open, onOpenChange, customer, onSuccess 
 						request_max_limit: requestMaxLimitNum,
 						request_reset_duration:
 							requestMaxLimitNum !== undefined && requestMaxLimitNum !== null ? formData.requestResetDuration : undefined,
+						input_token_weight: formData.inputTokenWeight,
+						output_token_weight: formData.outputTokenWeight,
 					};
 				}
 
@@ -318,6 +331,39 @@ export default function CustomerSheet({ open, onOpenChange, customer, onSuccess 
 								onChangeSelect={(value) => updateField("tokenResetDuration", value)}
 								options={resetDurationOptions}
 							/>
+
+							{formData.tokenMaxLimit !== undefined && (
+								<div className="grid grid-cols-2 gap-3">
+									<div>
+										<Label htmlFor="inputTokenWeight" className="text-sm font-normal">
+											Input Token Weight
+										</Label>
+										<Input
+											id="inputTokenWeight"
+											type="number"
+											min="0"
+											step="0.1"
+											placeholder="1.0"
+											value={formData.inputTokenWeight ?? ""}
+											onChange={(e) => updateField("inputTokenWeight", e.target.value === "" ? undefined : Number(e.target.value))}
+										/>
+									</div>
+									<div>
+										<Label htmlFor="outputTokenWeight" className="text-sm font-normal">
+											Output Token Weight
+										</Label>
+										<Input
+											id="outputTokenWeight"
+											type="number"
+											min="0"
+											step="0.1"
+											placeholder="1.0"
+											value={formData.outputTokenWeight ?? ""}
+											onChange={(e) => updateField("outputTokenWeight", e.target.value === "" ? undefined : Number(e.target.value))}
+										/>
+									</div>
+								</div>
+							)}
 
 							<NumberAndSelect
 								id="requestMaxLimit"

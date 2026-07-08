@@ -22,6 +22,10 @@ export interface RateLimit {
 	request_reset_duration?: string; // e.g., "30s", "5m", "1h", "1d", "1w", "1M"
 	request_current_usage: number; // Current request usage
 	request_last_reset: string; // ISO timestamp
+	// Optional weighted token accounting: consumed = prompt_tokens*input_token_weight + completion_tokens*output_token_weight.
+	// Omitted/undefined defaults to 1.0 (flat total-token accounting, today's behavior). Must be > 0, no upper bound.
+	input_token_weight?: number;
+	output_token_weight?: number;
 }
 
 export interface Team {
@@ -241,6 +245,9 @@ export interface CreateRateLimitRequest {
 	token_reset_duration?: string; // e.g., "30s", "5m", "1h", "1d", "1w", "1M"
 	request_max_limit?: number; // Maximum requests allowed
 	request_reset_duration?: string; // e.g., "30s", "5m", "1h", "1d", "1w", "1M"
+	// Optional weighted token accounting; omitted defaults to 1.0 (flat total-token accounting). Must be > 0, no upper bound.
+	input_token_weight?: number;
+	output_token_weight?: number;
 }
 
 export interface UpdateRateLimitRequest {
@@ -248,6 +255,9 @@ export interface UpdateRateLimitRequest {
 	token_reset_duration?: string | null; // e.g., "30s", "5m", "1h", "1d", "1w", "1M" (null to clear)
 	request_max_limit?: number | null; // Maximum requests allowed (null to clear)
 	request_reset_duration?: string | null; // e.g., "30s", "5m", "1h", "1d", "1w", "1M" (null to clear)
+	// Optional weighted token accounting; omitted/null defaults to 1.0 (flat total-token accounting). Must be > 0, no upper bound.
+	input_token_weight?: number | null;
+	output_token_weight?: number | null;
 }
 
 export interface ResetUsageRequest {
