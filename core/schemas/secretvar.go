@@ -1,6 +1,7 @@
 package schemas
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"fmt"
 	"os"
@@ -49,8 +50,7 @@ func parseSecretRef(value string) *SecretVar {
 		val = unquoted
 	}
 	if sonic.Valid([]byte(value)) {
-		valueNode, _ := sonic.Get([]byte(val), "value")
-		if valueNode.Exists() {
+		if trimmed := bytes.TrimSpace([]byte(val)); len(trimmed) > 0 && trimmed[0] == '{' {
 			type secretVarCompat struct {
 				Val        string     `json:"value"`
 				Ref        string     `json:"ref"`
@@ -82,6 +82,9 @@ func parseSecretRef(value string) *SecretVar {
 					// Legacy format: value == env_var == "env.XXX"
 					e.ref = raw.EnvVar
 					e.SecretType = SecretTypeEnv
+				} else {
+					// Plain text JSON object ({value, ...} with no type/ref/from_env).
+					e.SecretType = SecretTypePlainText
 				}
 				return e
 			}
@@ -93,7 +96,7 @@ func parseSecretRef(value string) *SecretVar {
 	if strings.HasPrefix(val, "env.") {
 		return &SecretVar{ref: val, SecretType: SecretTypeEnv}
 	}
-	return &SecretVar{Val: val}
+	return &SecretVar{Val: val, SecretType: SecretTypePlainText}
 }
 
 // IsSecretRef reports whether value is a secret reference (env.* or vault.* prefix,
@@ -295,8 +298,7 @@ func (e *SecretVar) UnmarshalJSON(data []byte) error {
 		val = unquoted
 	}
 	if sonic.Valid(data) {
-		valueNode, _ := sonic.Get(data, "value")
-		if valueNode.Exists() {
+		if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '{' {
 			type secretVarCompat struct {
 				Val        string     `json:"value"`
 				Ref        string     `json:"ref"`
@@ -353,6 +355,9 @@ func (e *SecretVar) UnmarshalJSON(data []byte) error {
 					} else {
 						e.Val = ""
 					}
+				}
+				if e.SecretType == "" {
+					e.SecretType = SecretTypePlainText
 				}
 				return nil
 			}

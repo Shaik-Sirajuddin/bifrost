@@ -1,7 +1,4 @@
-- fix: emit `contentBlockStop` events on the Bedrock ConverseStream egress so consumers that assemble messages on block boundaries get complete content (closes #4262) [@fus3r](https://github.com/fus3r)
-- fix: set the raw-storage log flag on standalone MCP tool executions so logging hooks see an explicit value
-- fix: clear the per-attempt stream close claim so streaming retries and fallbacks are not dead on arrival after an SSE-embedded provider error (closes #4788) [@fus3r](https://github.com/fus3r)
-- fix: emit reads-only `cached_tokens` in usage per the OpenAI spec so cache writes are not priced as cache reads (closes #4816) [@fus3r](https://github.com/fus3r)
+[fix]: zero pooled ChannelMessage references on release to avoid pinning request bodies [@citrocat](https://github.com/citrocat)
 - fix: preserve Gemini file upload MIME types for GenAI file URI completions
 - fix: Gemini video reference fields map to instances [@vojthor](https://github.com/vojthor)
 - fix: accept object-valued tool-call arguments (e.g. tool_search_call) on the Responses API streaming path
@@ -9,3 +6,6 @@
 - fix: deterministic MCP tool ordering for prompt cache stability (closes #2347)
 - fix: pass through `gs://` image URLs on Vertex Gemini (closes #4402)
 - fix: signal Bedrock max_output_tokens truncation on Responses API [@jeremym-tanium](https://github.com/jeremym-tanium)
+- fix: round-trip Anthropic `redacted_thinking` blocks on the responses surface so multi-turn tool use with redacted reasoning can be replayed (closes #5093) [@fus3r](https://github.com/fus3r)
+[fix]: omit role from OpenAI Responses non-message items [@nettee](https://github.com/nettee)
+- fix: reset `HasEmittedWebSearch` when recycling pooled Gemini responses stream state so grounded streaming requests keep emitting `web_search_call` items (closes #5113) [@fus3r](https://github.com/fus3r)
