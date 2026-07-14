@@ -1,3 +1,4 @@
+- fix: emit output_item.added for reasoning deltas on the Chat-Completions-fallback streaming path so the Anthropic-compat SSE converter opens a matching content_block_start before any thinking_delta (closes #5169)
 [fix]: warn callers not to truncate the `#t=` temp-token fragment on MCP inline-auth links [@MarcusPeng](https://github.com/MarcusPeng)
 [fix]: zero pooled ChannelMessage references on release to avoid pinning request bodies [@citrocat](https://github.com/citrocat)
 - fix: preserve Gemini file upload MIME types for GenAI file URI completions
