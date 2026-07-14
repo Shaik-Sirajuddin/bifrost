@@ -2,6 +2,7 @@ package schemas
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -808,6 +809,276 @@ func TestToBifrostResponsesStreamResponse_ToolCallsOnlyInCompletedOutput(t *test
 	}
 	if item.Arguments == nil || *item.Arguments != `{"q":"test"}` {
 		t.Fatalf("expected arguments %q, got %v", `{"q":"test"}`, item.Arguments)
+	}
+}
+
+func TestToBifrostResponsesStreamResponse_MultipleToolCallsInSameChunk(t *testing.T) {
+	state := AcquireChatToResponsesStreamState()
+	defer ReleaseChatToResponsesStreamState(state)
+
+	role := string(ChatMessageRoleAssistant)
+	toolCallsFinish := string(BifrostFinishReasonToolCalls)
+	funcNameA := "get_weather"
+	funcNameB := "get_time"
+	toolCallIDA := "call_a"
+	toolCallIDB := "call_b"
+
+	var all []*BifrostResponsesStreamResponse
+
+	// Role chunk
+	all = append(all, (&BifrostChatResponse{
+		ID:    "chatcmpl-test",
+		Model: "test-model",
+		Choices: []BifrostResponseChoice{
+			{
+				ChatStreamResponseChoice: &ChatStreamResponseChoice{
+					Delta: &ChatStreamResponseChoiceDelta{
+						Role: &role,
+					},
+				},
+			},
+		},
+	}).ToBifrostResponsesStreamResponse(state)...)
+
+	// A single chunk announcing two parallel tool calls at once, as some
+	// OpenAI-compatible backends (vLLM, Together, Groq, etc.) do.
+	all = append(all, (&BifrostChatResponse{
+		ID:    "chatcmpl-test",
+		Model: "test-model",
+		Choices: []BifrostResponseChoice{
+			{
+				ChatStreamResponseChoice: &ChatStreamResponseChoice{
+					Delta: &ChatStreamResponseChoiceDelta{
+						ToolCalls: []ChatAssistantMessageToolCall{
+							{
+								Index:    0,
+								ID:       &toolCallIDA,
+								Function: ChatAssistantMessageToolCallFunction{Name: &funcNameA, Arguments: `{"city":"Paris"}`},
+							},
+							{
+								Index:    1,
+								ID:       &toolCallIDB,
+								Function: ChatAssistantMessageToolCallFunction{Name: &funcNameB, Arguments: `{"tz":"UTC"}`},
+							},
+						},
+					},
+				},
+			},
+		},
+	}).ToBifrostResponsesStreamResponse(state)...)
+
+	// Finish with tool_calls
+	all = append(all, (&BifrostChatResponse{
+		ID:    "chatcmpl-test",
+		Model: "test-model",
+		Choices: []BifrostResponseChoice{
+			{
+				FinishReason: &toolCallsFinish,
+				ChatStreamResponseChoice: &ChatStreamResponseChoice{
+					Delta: &ChatStreamResponseChoiceDelta{},
+				},
+			},
+		},
+	}).ToBifrostResponsesStreamResponse(state)...)
+
+	addedIDs := map[string]bool{}
+	for _, evt := range all {
+		if evt != nil && evt.Type == ResponsesStreamResponseTypeOutputItemAdded && evt.Item != nil &&
+			evt.Item.Type != nil && *evt.Item.Type == ResponsesMessageTypeFunctionCall {
+			if evt.Item.ID != nil {
+				addedIDs[*evt.Item.ID] = true
+			}
+		}
+	}
+	if !addedIDs[toolCallIDA] || !addedIDs[toolCallIDB] {
+		t.Fatalf("expected output_item.added for both tool calls in the same chunk, got %v", addedIDs)
+	}
+
+	var completed *BifrostResponsesStreamResponse
+	for _, evt := range all {
+		if evt != nil && evt.Type == ResponsesStreamResponseTypeCompleted {
+			completed = evt
+		}
+	}
+	if completed == nil || completed.Response == nil {
+		t.Fatal("expected response.completed event")
+	}
+
+	output := completed.Response.Output
+	if len(output) != 2 {
+		t.Fatalf("expected 2 function_call output items, got %d", len(output))
+	}
+	if output[0].CallID == nil || *output[0].CallID != toolCallIDA {
+		t.Fatalf("expected first output item to be %q, got %v", toolCallIDA, output[0].CallID)
+	}
+	if output[1].CallID == nil || *output[1].CallID != toolCallIDB {
+		t.Fatalf("expected second output item to be %q, got %v", toolCallIDB, output[1].CallID)
+	}
+}
+
+func TestToBifrostResponsesStreamResponse_ToolCallCloseEventsAreOrderedByOutputIndex(t *testing.T) {
+	state := AcquireChatToResponsesStreamState()
+	defer ReleaseChatToResponsesStreamState(state)
+
+	role := string(ChatMessageRoleAssistant)
+	toolCallsFinish := string(BifrostFinishReasonToolCalls)
+
+	// Use enough tool calls that an accidental pass due to Go's randomized
+	// map iteration order happening to already be sorted is negligible
+	// (1 in 12! chance) rather than merely unlikely.
+	const numToolCalls = 12
+	toolCallIDs := make([]string, numToolCalls)
+	names := make([]string, numToolCalls)
+	for i := 0; i < numToolCalls; i++ {
+		toolCallIDs[i] = fmt.Sprintf("call_%d", i)
+		names[i] = fmt.Sprintf("fn%d", i)
+	}
+
+	var all []*BifrostResponsesStreamResponse
+
+	all = append(all, (&BifrostChatResponse{
+		ID:    "chatcmpl-test",
+		Model: "test-model",
+		Choices: []BifrostResponseChoice{
+			{
+				ChatStreamResponseChoice: &ChatStreamResponseChoice{
+					Delta: &ChatStreamResponseChoiceDelta{Role: &role},
+				},
+			},
+		},
+	}).ToBifrostResponsesStreamResponse(state)...)
+
+	toolCalls := make([]ChatAssistantMessageToolCall, len(toolCallIDs))
+	for i := range toolCallIDs {
+		toolCalls[i] = ChatAssistantMessageToolCall{
+			Index:    uint16(i),
+			ID:       &toolCallIDs[i],
+			Function: ChatAssistantMessageToolCallFunction{Name: &names[i], Arguments: `{}`},
+		}
+	}
+	all = append(all, (&BifrostChatResponse{
+		ID:    "chatcmpl-test",
+		Model: "test-model",
+		Choices: []BifrostResponseChoice{
+			{
+				ChatStreamResponseChoice: &ChatStreamResponseChoice{
+					Delta: &ChatStreamResponseChoiceDelta{ToolCalls: toolCalls},
+				},
+			},
+		},
+	}).ToBifrostResponsesStreamResponse(state)...)
+
+	all = append(all, (&BifrostChatResponse{
+		ID:    "chatcmpl-test",
+		Model: "test-model",
+		Choices: []BifrostResponseChoice{
+			{
+				FinishReason: &toolCallsFinish,
+				ChatStreamResponseChoice: &ChatStreamResponseChoice{
+					Delta: &ChatStreamResponseChoiceDelta{},
+				},
+			},
+		},
+	}).ToBifrostResponsesStreamResponse(state)...)
+
+	var closeIndices []int
+	for _, evt := range all {
+		if evt != nil && evt.Type == ResponsesStreamResponseTypeFunctionCallArgumentsDone && evt.OutputIndex != nil {
+			closeIndices = append(closeIndices, *evt.OutputIndex)
+		}
+	}
+
+	if len(closeIndices) != len(toolCallIDs) {
+		t.Fatalf("expected %d function_call_arguments.done events, got %d", len(toolCallIDs), len(closeIndices))
+	}
+	for i := 1; i < len(closeIndices); i++ {
+		if closeIndices[i] <= closeIndices[i-1] {
+			t.Fatalf("expected function_call_arguments.done events in ascending output-index order, got %v", closeIndices)
+		}
+	}
+}
+
+func TestToBifrostResponsesStreamResponse_MalformedToolCallEntryDoesNotSkipTerminalEvent(t *testing.T) {
+	state := AcquireChatToResponsesStreamState()
+	defer ReleaseChatToResponsesStreamState(state)
+
+	role := string(ChatMessageRoleAssistant)
+	toolCallsFinish := string(BifrostFinishReasonToolCalls)
+	funcName := "get_weather"
+	toolCallID := "call_valid"
+
+	var all []*BifrostResponsesStreamResponse
+
+	all = append(all, (&BifrostChatResponse{
+		ID:    "chatcmpl-test",
+		Model: "test-model",
+		Choices: []BifrostResponseChoice{
+			{
+				ChatStreamResponseChoice: &ChatStreamResponseChoice{
+					Delta: &ChatStreamResponseChoiceDelta{Role: &role},
+				},
+			},
+		},
+	}).ToBifrostResponsesStreamResponse(state)...)
+
+	// Register one valid, fully-formed tool call.
+	all = append(all, (&BifrostChatResponse{
+		ID:    "chatcmpl-test",
+		Model: "test-model",
+		Choices: []BifrostResponseChoice{
+			{
+				ChatStreamResponseChoice: &ChatStreamResponseChoice{
+					Delta: &ChatStreamResponseChoiceDelta{
+						ToolCalls: []ChatAssistantMessageToolCall{
+							{
+								Index:    0,
+								ID:       &toolCallID,
+								Function: ChatAssistantMessageToolCallFunction{Name: &funcName, Arguments: `{"city":"Paris"}`},
+							},
+						},
+					},
+				},
+			},
+		},
+	}).ToBifrostResponsesStreamResponse(state)...)
+
+	// Final chunk: a malformed tool-call entry (no ID, and an index that was
+	// never registered) arrives in the same delta as the finish reason. Prior
+	// to the fix, hitting this entry would `return` out of the whole
+	// conversion before the FinishReason/terminal-event handling ran below,
+	// silently dropping response.completed for a legitimate stream.
+	final := (&BifrostChatResponse{
+		ID:    "chatcmpl-test",
+		Model: "test-model",
+		Choices: []BifrostResponseChoice{
+			{
+				FinishReason: &toolCallsFinish,
+				ChatStreamResponseChoice: &ChatStreamResponseChoice{
+					Delta: &ChatStreamResponseChoiceDelta{
+						ToolCalls: []ChatAssistantMessageToolCall{
+							{
+								Index:    99,
+								Function: ChatAssistantMessageToolCallFunction{Arguments: `"ignored"`},
+							},
+						},
+					},
+				},
+			},
+		},
+	}).ToBifrostResponsesStreamResponse(state)
+	all = append(all, final...)
+
+	var completed *BifrostResponsesStreamResponse
+	for _, evt := range final {
+		if evt != nil && evt.Type == ResponsesStreamResponseTypeCompleted {
+			completed = evt
+		}
+	}
+	if completed == nil || completed.Response == nil {
+		t.Fatal("expected response.completed event even when the same chunk contains a malformed tool call entry")
+	}
+	if len(completed.Response.Output) != 1 {
+		t.Fatalf("expected the valid tool call to still be present in completed output, got %d items", len(completed.Response.Output))
 	}
 }
 

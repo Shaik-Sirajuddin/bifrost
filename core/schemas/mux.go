@@ -1787,10 +1787,9 @@ func (cr *BifrostChatResponse) ToBifrostResponsesStreamResponse(state *ChatToRes
 		}
 	}
 
-	if len(delta.ToolCalls) > 0 {
+	for _, toolCall := range delta.ToolCalls {
 		// Tool call delta - handle function call arguments
-		toolCall := delta.ToolCalls[0] // Take first tool call
-		contentIndex := 1              // Tool calls use content_index:1
+		contentIndex := 1 // Tool calls use content_index:1
 
 		// Determine tool call ID: use ID if present, otherwise look up by index
 		var toolCallID string
@@ -1801,9 +1800,9 @@ func (cr *BifrostChatResponse) ToBifrostResponsesStreamResponse(state *ChatToRes
 			if id, exists := state.ToolCallIndexToID[toolCall.Index]; exists {
 				toolCallID = id
 			} else {
-				// No ID and no mapping found - skip this chunk
+				// No ID and no mapping found - skip this tool call entry
 				// This can happen if the stream is malformed or out of order
-				return responses
+				continue
 			}
 		}
 
@@ -2056,10 +2055,29 @@ func (cr *BifrostChatResponse) ToBifrostResponsesStreamResponse(state *ChatToRes
 			state.TextItemClosed = true
 		}
 
-		// Close any open tool call items and emit function_call_arguments.done
-		for toolCallID, args := range state.ToolArgumentBuffers {
+		// Close any open tool call items and emit function_call_arguments.done.
+		// Tool call IDs are visited in ascending output-index order so that
+		// content_block_stop-equivalent events are always emitted in the same
+		// order the corresponding content_block_start events were sent.
+		type closingToolCall struct {
+			toolCallID  string
+			outputIndex int
+		}
+		closingToolCalls := make([]closingToolCall, 0, len(state.ToolArgumentBuffers))
+		for toolCallID := range state.ToolArgumentBuffers {
+			closingToolCalls = append(closingToolCalls, closingToolCall{
+				toolCallID:  toolCallID,
+				outputIndex: state.ToolCallOutputIndices[toolCallID],
+			})
+		}
+		sort.Slice(closingToolCalls, func(i, j int) bool {
+			return closingToolCalls[i].outputIndex < closingToolCalls[j].outputIndex
+		})
+		for _, entry := range closingToolCalls {
+			toolCallID := entry.toolCallID
+			args := state.ToolArgumentBuffers[toolCallID]
 			if args != "" {
-				outputIndex := state.ToolCallOutputIndices[toolCallID]
+				outputIndex := entry.outputIndex
 				itemID := state.ItemIDs[toolCallID]
 				contentIndex := 1 // Tool calls use content_index:1
 				argsCopy := args
