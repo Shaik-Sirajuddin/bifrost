@@ -1,0 +1,25 @@
+====================================================================================================
+[2026-07-14T11:13:45.935126] anthropic-sdk-python version: 0.116.0
+Target: http://localhost:8123/anthropic model=ollama/qwen3:0.6b
+====================================================================================================
+[event 001] type=message_start raw=RawMessageStartEvent(message=Message(id='chatcmpl-969', container=None, content=[], model='qwen3:0.6b', role='assistant', stop_details=None, stop_reason=None, stop_sequence=None, type='message', usage=Usage(cache_creation=CacheCreation(ephemeral_1h_input_tokens=0, ephemeral_5m_input_tokens=0), cache_creation_input_tokens=0, cache_read_input_tokens=0, inference_geo=None, input_tokens=0, output_tokens=0, output_tokens_details=None, server_tool_use=None, service_tier=None)), type='message_start')
+[event 002] type=content_block_start raw=RawContentBlockStartEvent(content_block=TextBlock(citations=None, text='', type='text'), index=0, type='content_block_start')
+[event 003] type=content_block_delta raw=RawContentBlockDeltaEvent(delta=TextDelta(text='', type='text_delta', stop_sequence=None), index=0, type='content_block_delta')
+[event 004] type=text raw=TextEvent(type='text', text='', snapshot='')
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+CRASHED after 4 events: IndexError: list index out of range
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Traceback (most recent call last):
+  File "/home/siraj/.claude/jobs/a26b4ac8/tmp/repro_anthropic_sdk.py", line 57, in main
+    for event in stream:
+  File "/home/siraj/.pyenv/versions/3.12.3/lib/python3.12/site-packages/anthropic/lib/streaming/_messages.py", line 67, in __iter__
+    for item in self._iterator:
+  File "/home/siraj/.pyenv/versions/3.12.3/lib/python3.12/site-packages/anthropic/lib/streaming/_messages.py", line 130, in __stream__
+    self.__final_message_snapshot = accumulate_event(
+                                    ^^^^^^^^^^^^^^^^^
+  File "/home/siraj/.pyenv/versions/3.12.3/lib/python3.12/site-packages/anthropic/lib/streaming/_messages.py", line 465, in accumulate_event
+    content = current_snapshot.content[event.index]
+              ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+IndexError: list index out of range
+
