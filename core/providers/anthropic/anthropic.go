@@ -972,11 +972,15 @@ func HandleAnthropicChatCompletionStreaming(
 					}
 				}
 				// Capture served fast mode + inference geography (top-level response fields).
+				// Mirror onto the billing usage handle so a mid-stream cancel/timeout can
+				// still apply the served-tier multiplier (billed usage is otherwise bare).
 				if usageToProcess.Speed != nil {
 					servedSpeed = usageToProcess.Speed
+					usage.Speed = usageToProcess.Speed
 				}
 				if usageToProcess.InferenceGeo != nil {
 					servedInferenceGeo = usageToProcess.InferenceGeo
+					usage.InferenceGeo = usageToProcess.InferenceGeo
 				}
 				// Collect usage information and send at the end of the stream
 				// Here in some cases usage comes before final message
@@ -1552,11 +1556,19 @@ func HandleAnthropicResponsesStream(
 				// Also mirror it into billedUsage so cancellation/timeout paths can
 				// charge for provider-reported usage before the final chunk arrives.
 				accumulateAnthropicResponsesUsage(usage, billedUsage, usageToProcess)
+				// Mirror served tier onto billedUsage so a mid-stream cancel/timeout can
+				// still apply the served-tier multiplier (billed usage is otherwise bare).
 				if usageToProcess.Speed != nil {
 					servedSpeed = usageToProcess.Speed
+					if billedUsage != nil {
+						billedUsage.Speed = usageToProcess.Speed
+					}
 				}
 				if usageToProcess.InferenceGeo != nil {
 					servedInferenceGeo = usageToProcess.InferenceGeo
+					if billedUsage != nil {
+						billedUsage.InferenceGeo = usageToProcess.InferenceGeo
+					}
 				}
 			}
 
